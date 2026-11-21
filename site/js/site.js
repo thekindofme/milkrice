@@ -1,4 +1,4 @@
-/* Milkrice — site. Three small jobs: copy buttons, and two fallbacks for browsers
+/* Milkrice — site. Small jobs: copy buttons, campaign tags on Download links, and two fallbacks for browsers
    without CSS scroll-driven animations (the story's progress, and section reveals). */
 (() => {
   'use strict';
@@ -12,6 +12,20 @@
       setTimeout(() => { btn.textContent = 'Copy'; delete btn.dataset.done; }, 1600);
     });
   });
+
+  // Download links: carry this page's campaign tags (?ref=blog, utm_*) on to /download,
+  // so a click can be credited to the link that brought the visitor here. Nothing is stored.
+  const tags = new URLSearchParams();
+  new URLSearchParams(location.search).forEach((v, k) => {
+    if (k === 'ref' || k.startsWith('utm_')) tags.set(k, v);
+  });
+  if ([...tags].length) {
+    document.querySelectorAll('a[href^="/download"]').forEach((a) => {
+      const u = new URL(a.href);
+      tags.forEach((v, k) => u.searchParams.set(k, v));
+      a.href = u.pathname + u.search;
+    });
+  }
 
   // The film section stays out of the page until its poster is actually there.
   const film = document.getElementById('film');

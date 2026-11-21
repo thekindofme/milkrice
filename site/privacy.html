@@ -27,7 +27,7 @@
     <a href="./#faq">FAQ</a>
     <a href="https://github.com/thekindofme/milkrice">GitHub</a>
   </nav>
-  <a class="btn btn-sm" href="https://github.com/thekindofme/milkrice/releases/latest">Download</a>
+  <a class="btn btn-sm" href="/download?from=nav">Download</a>
   </header>
   <main id="main" class="doc wrap">
     <aside class="doc-aside">
@@ -41,12 +41,20 @@
     </aside>
     <article class="doc-body">
       <h1>Privacy</h1>
-      <p class="updated">Last updated 21 November 2026</p>
-      <div class="note"><p><strong>The short version.</strong> We don't collect anything. Milkrice has no account, no telemetry, no analytics and no server of ours. Your notes, transcripts and audio stay on your Mac and iPhone. Text leaves your Mac only when Milkrice asks the AI provider you chose to write something, and that goes to the provider under your own account.</p></div>
+      <p class="updated">Last updated 22 November 2026</p>
+      <div class="note"><p><strong>The short version.</strong> We don't collect anything about you. The Milkrice apps have no account, no telemetry, no analytics and no server of ours. Your notes, transcripts and audio stay on your Mac and iPhone. Text leaves your Mac only when Milkrice asks the AI provider you chose to write something, and that goes to the provider under your own account. This website counts visits and downloads anonymously, without cookies.</p></div>
 
       <h2>What we collect</h2>
       <p>Nothing. The people who make Milkrice do not receive your meetings, notes, transcripts, audio, calendar, contacts, usage data or crash reports. There is no sign-in and no licence check that phones home.</p>
-      <p>This website sets no cookies and runs no analytics or third-party trackers. The fonts are loaded from Google Fonts, which receives your IP address and browser details when it serves them. Our web host may keep standard server logs, such as IP address and pages requested, for a short time to operate the site.</p>
+
+      <h2 id="website">This website</h2>
+      <p>This website sets no cookies and has no ads or third-party trackers. To see how people find Milkrice, we count visits and downloads in aggregate. None of this identifies you or follows you to other sites.</p>
+      <ul>
+        <li><strong>Visits.</strong> Cloudflare, which hosts this site, counts page views with <a href="https://www.cloudflare.com/web-analytics/">Cloudflare Web Analytics</a>: the page, the site that linked to it, browser and device type, and country. It uses no cookies or fingerprinting.</li>
+        <li><strong>Download clicks.</strong> The Download buttons go through <span class="path">/download</span>, which adds one to a count, noting the page or outside site you came from (its domain only), any campaign tag in the link, your country and platform (Mac, iPhone and so on), and then sends you to GitHub. Your IP address and browser details aren't stored.</li>
+        <li><strong>GitHub and the App Store.</strong> GitHub shows us totals for visits to the repository and downloads of each release, including the Mac app's check for updates. Apple shows us App Store totals, and shares usage figures only from people who chose to share them with developers.</li>
+      </ul>
+      <p>The fonts are loaded from Google Fonts, which receives your IP address and browser details when it serves them. Our web host may keep standard server logs, such as IP address and pages requested, for a short time to operate the site.</p>
 
       <h2>What Milkrice stores on your Mac</h2>
       <p>Everything lives in <span class="path">~/Library/<wbr>Application&nbsp;Support/<wbr>Milkrice</span>:</p>
@@ -110,7 +118,7 @@
   <div class="wrap">
     <a class="brand" href="./"><img src="assets/app-icon.webp" alt="" width="22" height="22" loading="lazy">Milkrice</a>
     <div class="foot-body">
-      <p>This site has no cookies, analytics or trackers, so there's nothing to accept.</p>
+      <p>This site sets no cookies and doesn't track you. We count visits and downloads anonymously (<a href="privacy.html#website">how</a>), so there's nothing to accept.</p>
       <p><a href="./">Back to the home page</a></p>
     </div>
   </div>

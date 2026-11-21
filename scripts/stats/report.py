@@ -69,6 +69,17 @@ def main():
         for kind in ("dmg", "update-bundle", "update-check"):
             print(f"  {kind}: +{now[kind] - then[kind]} (total {now[kind]})")
 
+    clicks = [r for r in rows(os.path.join(d, "site-downloads.csv")) if start <= r["date"] < end]
+    if clicks:
+        by_source, by_button = defaultdict(int), defaultdict(int)
+        for r in clicks:
+            by_source[r["source"]] += int(r["clicks"])
+            by_button[r["button"] or "(outside link)"] += int(r["clicks"])
+        print(f"\nWebsite Download clicks: {sum(by_source.values())}")
+        for k, v in sorted(by_source.items(), key=lambda kv: -kv[1])[:10]:
+            print(f"  from {k}: {v}")
+        print("  by button: " + ", ".join(f"{k} {v}" for k, v in sorted(by_button.items(), key=lambda kv: -kv[1])))
+
     refs = rows(os.path.join(d, "referrers.csv"))
     if refs:
         snap = max(r["snapshot"] for r in refs)

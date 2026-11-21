@@ -5,6 +5,8 @@ name: Repo stats
 # GitHub only keeps traffic for 14 days, so this is what keeps the history.
 # Needs a STATS_TOKEN secret: a fine-grained token for this repo with
 # "Administration: read" (traffic) and "Contents: read". See docs/ANALYTICS.md.
+# Also uses CF_ACCOUNT_ID and CF_ANALYTICS_TOKEN (a Cloudflare API token with
+# "Account Analytics: Read") to archive website download clicks.
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -39,6 +41,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.STATS_TOKEN }}
         run: python3 src/scripts/stats/collect.py "${{ github.repository }}" stats
+
+      - name: Collect website download clicks
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_ANALYTICS_TOKEN: ${{ secrets.CF_ANALYTICS_TOKEN }}
+        run: |
+          if [ -z "$CF_ANALYTICS_TOKEN" ] || [ -z "$CF_ACCOUNT_ID" ]; then echo "Cloudflare secrets not set, skipping"; exit 0; fi
+          python3 src/scripts/stats/downloads.py stats
 
       - name: Commit
         working-directory: stats
