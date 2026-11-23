@@ -1618,7 +1618,7 @@ function renderSettings(v) {
   <div class="row"><div class="rl"><b>Microphone</b><span>Your voice is always labelled as you.</span></div><select class="field" id="micSel"><option value="">System default</option></select></div>
   <div class="row"><div class="rl"><b>Capture other participants</b><span>Transcribes everyone else on the call, not just you.</span></div>${sw("capture_system", s.capture_system)}</div>
   <div class="row"><div class="rl"><b>Recognise speakers</b><span>Tells voices apart locally; names come from the invite.</span></div>${sw("diarize", s.diarize)}</div>
-  <div class="row"><div class="rl"><b>Keep recordings</b><span>Off by default. When on, each meeting's audio is saved on this Mac (you left, the call right, about 60 MB an hour) so you can replay any moment from the transcript.</span></div>${sw("keep_audio", s.keep_audio)}</div>
+  <div class="row"><div class="rl"><b>Keep recordings</b><span>Off by default. When on, each meeting's audio is saved on this Mac (about 60 MB an hour) so you can replay any moment from the transcript.</span></div>${sw("keep_audio", s.keep_audio)}</div>
   ${s.keep_audio ? `<div class="row"><div class="rl"><b>Delete recordings after</b><span id="audioUsage">Transcripts and notes are always kept.</span></div>${seg("audio_retention_days", String(s.audio_retention_days), [["7", "7 days"], ["30", "30 days"], ["90", "90 days"], ["0", "Never"]])}</div>` : ""}
   <div class="row"><div class="rl"><b>Your name</b><span>Used for your lines in transcripts.</span></div><input class="field" id="userName" value="${esc(s.user_name)}" placeholder="Me" /></div>
   </div>`;

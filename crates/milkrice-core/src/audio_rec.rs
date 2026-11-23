@@ -1,10 +1,14 @@
-//! Opt-in local recording of a meeting: mic on the left channel, call audio on the right,
-//! 48 kHz, saved as AAC (.m4a, ~58 MB/hour) next to the transcript so moments can be replayed.
+//! Opt-in local recording of a meeting, 48 kHz stereo, saved as AAC (.m4a, ~58 MB/hour) next to the transcript so moments can be replayed.
 //! Transcription keeps using its own 16 kHz stream; this one is for listening.
 //!
 //! Both sides are written as they arrive, kept in step (a gap on one side becomes silence), and
 //! the mic side goes through WebRTC's AEC3 echo canceller with the call audio as reference, so
 //! the caller isn't heard a second time through your speakers.
+//!
+//! The file is for listening: both voices are in both channels (you slightly left, the call
+//! slightly right), so it sounds natural on speakers and headphones. Each side's loudness is
+//! kept separately in `<offset>.peaks.json` for the playback timeline. Recordings made before
+//! this have you only on the left channel and the call only on the right.
 use crate::audio::RECORD_RATE;
 use crate::types::{AudioSource, SAMPLE_RATE};
 use aec3::nodes::audio::AudioFormat;
@@ -28,7 +32,16 @@ pub struct AudioRecorder {
     mic_frame: Vec<f32>,
     sys_frame: Vec<f32>,
     cleaned: Vec<f32>,
+    /// Per-side loudness outline, built while writing (the file itself mixes the sides).
+    peaks: Peaks,
+    peak_acc: (f64, f64, usize),
 }
+
+/// Stereo placement of each side: (left gain, right gain). Both voices in both speakers, you a
+/// little to the left and the call a little to the right, so overlapping talk stays easy to
+/// follow.
+const MIC_PAN: (f32, f32) = (0.7, 0.4);
+const CALL_PAN: (f32, f32) = (0.4, 0.7);
 
 fn spec() -> hound::WavSpec {
     hound::WavSpec { channels: 2, sample_rate: RECORD_RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int }
@@ -98,6 +111,8 @@ impl AudioRecorder {
             mic_frame: vec![0.0; FRAME],
             sys_frame: vec![0.0; FRAME],
             cleaned: vec![0.0; FRAME],
+            peaks: Peaks { step_ms: PEAK_STEP_MS, mic: Vec::new(), call: Vec::new() },
+            peak_acc: (0.0, 0.0, 0),
         })
     }
 
@@ -149,9 +164,18 @@ impl AudioRecorder {
                     left = &self.cleaned;
                 }
             }
-            for (l, r) in left.iter().zip(&self.sys_frame) {
-                let _ = self.out.write_sample(to_i16(*l));
-                let _ = self.out.write_sample(to_i16(*r));
+            let (a, b, n) = &mut self.peak_acc;
+            for (m, c) in left.iter().zip(&self.sys_frame) {
+                let _ = self.out.write_sample(to_i16(m * MIC_PAN.0 + c * CALL_PAN.0));
+                let _ = self.out.write_sample(to_i16(m * MIC_PAN.1 + c * CALL_PAN.1));
+                *a += (*m as f64).powi(2);
+                *b += (*c as f64).powi(2);
+            }
+            *n += FRAME;
+            if *n >= (RECORD_RATE * PEAK_STEP_MS / 1000) as usize {
+                self.peaks.mic.push(level(*a, *n));
+                self.peaks.call.push(level(*b, *n));
+                self.peak_acc = (0.0, 0.0, 0);
             }
         }
     }
@@ -165,7 +189,15 @@ impl AudioRecorder {
             q.extend(std::iter::repeat_n(0.0, n));
         }
         self.drain();
+        let (a, b, n) = self.peak_acc;
+        if n > 0 {
+            self.peaks.mic.push(level(a, n));
+            self.peaks.call.push(level(b, n));
+        }
         self.out.finalize()?;
+        if let Ok(json) = serde_json::to_vec(&self.peaks) {
+            let _ = std::fs::write(self.base.with_extension("peaks.json"), json);
+        }
         let raw = self.base.with_extension("rec.wav");
         let m4a = self.base.with_extension("m4a");
         let ok = std::process::Command::new("/usr/bin/afconvert")
@@ -403,7 +435,9 @@ mod tests {
             }
         }
         let out = r.finish().unwrap();
-        let (mic, _) = read_stereo(&out);
+        let (mic, right) = read_stereo(&out);
+        // Both voices play from both speakers (the mic a little to the left).
+        assert!(rms(&right[2 * sec + sec / 4..3 * sec - sec / 4]) > 0.15, "mic missing on the right");
         // The loud part lands in the last second, not right after the first.
         assert!(rms(&mic[sec + sec / 4..2 * sec - sec / 4]) < 0.05, "gap was not kept");
         assert!(rms(&mic[2 * sec + sec / 4..3 * sec - sec / 4]) > 0.3, "loud part misplaced");
@@ -426,10 +460,12 @@ mod tests {
             r.write(AudioSource::Mic, &[], m);
         }
         let out = r.finish().unwrap();
-        let (left, _) = read_stereo(&out);
-        let before = rms(&mic[4 * sec..6 * sec]);
-        let after = rms(&left[4 * sec..6 * sec]);
-        assert!(after < before * 0.25, "echo only went from {before} to {after}");
+        let p = peaks(&out).unwrap();
+        let avg = |v: &[u8]| v.iter().map(|x| *x as f32).sum::<f32>() / v.len() as f32;
+        // Leaked call audio sits at about -21 dB (level ~166); cancelled it must drop well below.
+        let after = avg(&p.mic[40..60]);
+        assert!(after < 115.0, "echo still at level {after} ({:?})", &p.mic[40..60]);
+        assert!(avg(&p.call[40..60]) > 150.0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
