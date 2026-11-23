@@ -576,6 +576,7 @@ pub fn selftest(app: AppHandle, dir: std::path::PathBuf) {
                 calendar: "Test".into(),
                 calendar_color: None,
                 all_day: false,
+                recurring: false,
             };
             let m = new_meeting(&state, "", Some(&ev))?;
             state.store.set_field(&m.id, "notes", "beta date\nrelease notes owner?")?;
@@ -690,6 +691,7 @@ pub fn calendar_selftest(app: AppHandle, secs: i64) {
         calendar: "QA".into(),
         calendar_color: None,
         all_day: false,
+        recurring: false,
     };
     *state.events.lock() = vec![ev.clone()];
     std::thread::spawn(move || {

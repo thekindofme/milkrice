@@ -43,6 +43,26 @@ pub struct Settings {
     pub audio_retention_days: u32,
     /// Mirror every meeting as Markdown into an Obsidian vault / folder (None = off).
     pub obsidian: Option<milkrice_core::obsidian::ExportOptions>,
+    /// Calendar events the user hid from Coming up (no nudges, no auto-record either).
+    /// Managed only by hide_event / unhide_event.
+    pub hidden_events: Vec<HiddenEvent>,
+}
+
+/// A hidden calendar event: a whole recurring series, or one occurrence.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HiddenEvent {
+    /// `CalEvent::series_id` for a series, `CalEvent::id` for one occurrence.
+    pub key: String,
+    pub title: String,
+    pub series: bool,
+    /// Start of the hidden occurrence (one-offs only), to show it and forget it once it's past.
+    pub start: Option<DateTime<Utc>>,
+}
+
+impl Settings {
+    pub fn is_hidden(&self, ev: &CalEvent) -> bool {
+        self.hidden_events.iter().any(|h| if h.series { h.key == ev.series_id() } else { h.key == ev.id })
+    }
 }
 
 impl Default for Settings {
@@ -67,6 +87,7 @@ impl Default for Settings {
             keep_audio: false,
             audio_retention_days: 30,
             obsidian: None,
+            hidden_events: Vec::new(),
         }
     }
 }
@@ -143,5 +164,40 @@ impl AppState {
         self.store.set_setting("settings", &serde_json::to_string(&s)?)?;
         *self.settings.lock() = s;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ev(id: &str) -> CalEvent {
+        CalEvent {
+            id: id.into(),
+            title: "Yoga".into(),
+            start: Utc::now(),
+            end: Utc::now(),
+            attendees: vec![],
+            location: None,
+            meeting_url: None,
+            calendar: "Personal".into(),
+            calendar_color: None,
+            all_day: false,
+            recurring: true,
+        }
+    }
+
+    #[test]
+    fn hides_a_series_or_one_occurrence() {
+        // Google iCal UIDs contain '@' themselves; only the last one is the start time.
+        let mon = ev("ics:abc123@google.com@1700000000");
+        let tue = ev("ics:abc123@google.com@1700086400");
+        assert_eq!(mon.series_id(), "ics:abc123@google.com");
+        let mut s = Settings::default();
+        s.hidden_events.push(HiddenEvent { key: tue.id.clone(), title: "Yoga".into(), series: false, start: Some(tue.start) });
+        assert!(!s.is_hidden(&mon) && s.is_hidden(&tue));
+        s.hidden_events = vec![HiddenEvent { key: mon.series_id().into(), title: "Yoga".into(), series: true, start: None }];
+        assert!(s.is_hidden(&mon) && s.is_hidden(&tue));
+        assert!(!s.is_hidden(&ev("ics:other@google.com@1700000000")));
     }
 }

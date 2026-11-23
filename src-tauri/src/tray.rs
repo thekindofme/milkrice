@@ -24,7 +24,8 @@ pub fn show_main(app: &AppHandle) {
 /// not already prompted for, and (if the setting is on) one with people or a call link.
 fn next_event(state: &AppState) -> Option<CalEvent> {
     let now = Utc::now();
-    let only_real = state.settings().only_real_meetings;
+    let s = state.settings();
+    let only_real = s.only_real_meetings;
     let prompted = state.prompt.lock().as_ref().and_then(|p| p.event.as_ref().map(|e| e.id.clone()));
     state
         .events
@@ -32,6 +33,7 @@ fn next_event(state: &AppState) -> Option<CalEvent> {
         .iter()
         .filter(|e| !e.all_day && e.end > now && e.start < now + chrono::Duration::hours(12))
         .filter(|e| !only_real || scheduler::is_real_meeting(e))
+        .filter(|e| !s.is_hidden(e))
         .filter(|e| prompted.as_deref() != Some(e.id.as_str()))
         .min_by_key(|e| e.start)
         .cloned()

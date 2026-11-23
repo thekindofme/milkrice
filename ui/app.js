@@ -54,11 +54,21 @@ const S = {
   levels: { mic: 0, system: 0 },
   asking: false,
   langFilter: "all",
+  hidden: [],
 };
 
-function toast(msg, ms = 2600) {
+// `action` ({ label, run }) adds a button, e.g. Undo, and keeps the toast clickable.
+function toast(msg, ms = 2600, action) {
   const t = $("#toast");
   t.textContent = msg;
+  t.classList.toggle("has-action", !!action);
+  if (action) {
+    const b = document.createElement("button");
+    b.className = "toast-act";
+    b.textContent = action.label;
+    b.onclick = () => { t.classList.remove("show"); action.run(); };
+    t.append(b);
+  }
   t.classList.add("show");
   clearTimeout(toast._t);
   toast._t = setTimeout(() => t.classList.remove("show"), ms);
@@ -149,7 +159,7 @@ async function loadFolders() {
   renderSidebar();
 }
 async function loadEvents() {
-  S.events = await invoke("upcoming_events");
+  [S.events, S.hidden] = await Promise.all([invoke("upcoming_events"), invoke("hidden_events").catch(() => [])]);
   renderSidebar();
   if (S.view === "home") render();
 }
@@ -354,6 +364,74 @@ async function openEvent(event, record) {
   } catch (e) { fail(e); }
 }
 
+// ------------------------------------------------------------------ hiding calendar meetings
+// Right-click a meeting in Coming up (or use its ⋯ on Home) to hide it: the whole recurring
+// series, or just this one. Hidden meetings also get no nudge and no auto-record. Undo from the
+// toast; "N hidden" next to Coming up (and Settings → Calendar) lists them to show again.
+const evTitle = (t) => { t = (t || "").trim() || "Untitled event"; return t.length > 40 ? `${t.slice(0, 38)}…` : t; };
+function openEventMenu(id, at) {
+  closeCtx();
+  const x = S.events.find((y) => y.event.id === id);
+  if (!x) return;
+  const e = x.event, t = esc(evTitle(e.title));
+  const items = e.recurring ? [["1", `Hide every “${t}”`], ["0", "Hide just this one"]] : [["0", "Hide this meeting"]];
+  const pop = document.createElement("div");
+  pop.id = "ctxMenu";
+  pop.className = "menu-pop ctx-menu";
+  pop.innerHTML = items.map(([k, label]) => `<button data-series="${k}">${label}</button>`).join("");
+  document.body.appendChild(pop);
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  pop.style.left = `${Math.max(8, Math.min(at.x, innerWidth - w - 8))}px`;
+  pop.style.top = `${Math.min(at.y, innerHeight - h - 8)}px`;
+  pop.querySelectorAll("[data-series]").forEach((b) => (b.onclick = () => { closeCtx(); hideEvent(e, b.dataset.series === "1"); }));
+  setTimeout(() => document.addEventListener("mousedown", ctxOutside, true), 0);
+}
+async function hideEvent(e, series) {
+  let h;
+  try { h = await invoke("hide_event", { eventId: e.id, series }); } catch (err) { return fail(err); }
+  await loadEvents();
+  const t = evTitle(h.title);
+  toast(h.series ? `Hid every “${t}”` : `Hid “${t}”`, 6000, { label: "Undo", run: () => unhideEvent(h.key, true) });
+}
+async function unhideEvent(key, quiet) {
+  const h = S.hidden.find((x) => x.key === key);
+  try { await invoke("unhide_event", { key }); } catch (err) { return fail(err); }
+  await loadEvents();
+  if ($("#hiddenEvs")) renderHiddenSettings();
+  if (!quiet && h) toast(`“${evTitle(h.title)}” is back in Coming up`);
+}
+function hiddenRowsHtml() {
+  return S.hidden.map((h) => {
+    const when = h.series ? "Every time it repeats" : new Date(h.start).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+    return `<div class="hid-row"><span><b>${esc(evTitle(h.title))}</b><small>${esc(when)}</small></span><button class="link" data-unhide="${esc(h.key)}">Show</button></div>`;
+  }).join("");
+}
+function openHiddenPop(anchor) {
+  closeCtx();
+  if (!S.hidden.length) return;
+  const pop = document.createElement("div");
+  pop.id = "ctxMenu";
+  pop.className = "menu-pop hid-pop";
+  const draw = () => {
+    if (!S.hidden.length) return closeCtx();
+    pop.innerHTML = `<div class="hid-h">Hidden from Coming up</div>${hiddenRowsHtml()}`;
+    pop.querySelectorAll("[data-unhide]").forEach((b) => (b.onclick = async () => { await unhideEvent(b.dataset.unhide); draw(); }));
+  };
+  draw();
+  document.body.appendChild(pop);
+  const r = anchor.getBoundingClientRect();
+  pop.style.left = `${Math.max(8, Math.min(r.right - pop.offsetWidth, innerWidth - pop.offsetWidth - 8))}px`;
+  pop.style.top = `${r.bottom + 6}px`;
+  setTimeout(() => document.addEventListener("mousedown", ctxOutside, true), 0);
+}
+function renderHiddenSettings() {
+  const box = $("#hiddenEvs");
+  if (!box) return;
+  box.innerHTML = S.hidden.length ? `<div class="row"><div class="rl"><b>Hidden meetings</b><span>Not shown in Coming up, and Milkrice won't nudge you or record them.</span></div></div>
+    <div class="hid-list">${hiddenRowsHtml()}</div>` : "";
+  box.querySelectorAll("[data-unhide]").forEach((b) => (b.onclick = () => unhideEvent(b.dataset.unhide)));
+}
+
 // ------------------------------------------------------------------ banner (meeting starting)
 // Work out *why* the mic is silent before telling the user anything.
 async function diagnoseMic(kind) {
@@ -484,19 +562,21 @@ function renderHome(v) {
   h += `<label class="ask-all">${ICON.spark}<input id="askAll" placeholder="Ask your recent meetings…" value="${esc(S.homeQ || "")}" /></label>`;
   if (S.homeAsking) h += `<div class="answer"><span class="busy"><span class="spinner"></span>Reading your meetings…</span></div>`;
   else if (S.homeAnswer) h += `<div class="answer md">${md(S.homeAnswer)}</div>`;
-  h += `<div class="section-h"><h3>Coming up</h3>${calOk ? "" : '<button class="link" id="connectCal">Connect calendar</button>'}</div>`;
+  const hid = S.hidden.length ? `<button class="link quiet" id="hiddenEv">${S.hidden.length} hidden</button>` : "";
+  h += `<div class="section-h"><h3>Coming up</h3><span class="section-links">${hid}${calOk ? "" : '<button class="link" id="connectCal">Connect calendar</button>'}</span></div>`;
   if (evs.length) {
     h += `<div class="cards">`;
     for (const x of evs) {
       const e = x.event, live = new Date(e.start) <= now;
       const who = e.attendees.filter((a) => !a.is_self).map((a) => a.name).slice(0, 3).join(", ");
-      h += `<div class="event-card ${live ? "now" : ""}">
+      h += `<div class="event-card ${live ? "now" : ""}" data-ev-card="${esc(e.id)}">
         <div class="time"><b>${live ? "Now" : fmtTime(e.start)}</b>${live ? `until ${fmtTime(e.end)}` : eventDay(e.start)}</div>
         <div style="min-width:0"><div class="et">${esc(e.title || "Untitled event")}</div>
           <div class="ea">${who ? esc(who) : esc(e.calendar)}${e.meeting_url ? " · call link" : ""}</div></div>
         <div style="display:flex;gap:6px">
           ${x.meeting_id ? `<button class="btn small" data-open="${esc(x.meeting_id)}">Open</button>` : ""}
           <button class="btn small ${live ? "ember" : ""}" data-ev="${esc(e.id)}" data-rec="${live ? 1 : 0}">${live ? "Start notes" : "Prep notes"}</button>
+          <button class="icon-btn ev-more" data-ev-more="${esc(e.id)}" title="Hide…" aria-label="Hide this meeting">${ICON.dots}</button>
         </div></div>`;
     }
     h += `</div>`;
@@ -520,6 +600,12 @@ function renderHome(v) {
     const x = S.events.find((y) => y.event.id === b.dataset.ev);
     if (x) openEvent(x.event, b.dataset.rec === "1");
   }));
+  v.querySelectorAll("[data-ev-more]").forEach((b) => (b.onclick = () => {
+    const r = b.getBoundingClientRect();
+    openEventMenu(b.dataset.evMore, { x: r.right - 200, y: r.bottom + 4 });
+  }));
+  const he = $("#hiddenEv");
+  if (he) he.onclick = () => openHiddenPop(he);
   const cc = $("#connectCal");
   if (cc) cc.onclick = connectCalendar;
   const sp = $("#setupPerms");
@@ -1128,6 +1214,8 @@ function closeCtx() { $("#ctxMenu")?.remove(); document.removeEventListener("mou
 function ctxOutside(e) { if (!e.target.closest("#ctxMenu")) closeCtx(); }
 function openCtx(e) {
   closeCtx();
+  const evEl = e.target.closest("[data-event], [data-ev-card]");
+  if (evEl) { e.preventDefault(); return openEventMenu(evEl.dataset.event || evEl.dataset.evCard, { x: e.clientX, y: e.clientY }); }
   if (S.view !== "note" || !S.detail) return;
   const field = e.target.closest("input, textarea");
   const sel = field ? field.value.slice(field.selectionStart, field.selectionEnd) : String(window.getSelection() || "");
@@ -1393,6 +1481,7 @@ function renderSettings(v) {
   <h2>Calendar &amp; meetings</h2><p class="desc">Milkrice only ever <b>reads</b> calendars. Pick the least access that works for you.</p>
   <div id="calSources"><p class="hint">Checking calendars…</p></div>
   <div class="row"><div class="rl"><b>When a meeting starts</b><span>Notify you, start recording on its own, or stay quiet.</span></div>${seg("calendar_mode", s.calendar_mode, [["notify", "Notify me"], ["auto", "Record automatically"], ["off", "Off"]])}</div>
+  <div id="hiddenEvs"></div>
   ${s.calendar_mode === "auto" ? `<p class="auto-ack"><span class="rec-dot"></span><span>Auto-record is on. Milkrice records meetings with people in them by itself, shows <b>Auto-record</b> in the sidebar and menu bar while it's on, and tells you each time it starts. Let the people you meet know they're being transcribed.</span></p>` : ""}
   <div class="row"><div class="rl"><b>Stop when the meeting ends</b><span>After the event's end time once the room goes quiet.</span></div>${sw("auto_stop", s.auto_stop)}</div>
   <div class="row"><div class="rl"><b>Open at login</b><span>Milkrice waits in the menu bar so it can catch your first meeting of the day.</span></div><button class="switch" id="autostartSw" role="switch" aria-checked="false"></button></div>
@@ -1674,6 +1763,7 @@ function bindSettings(v) {
   loadObsidian();
   loadSync();
   loadCalendarSources();
+  renderHiddenSettings();
   if (S.settings.keep_audio) invoke("audio_storage").then((u) => { const el = $("#audioUsage"); if (el) el.textContent = `Using ${(u.bytes / 1048576).toFixed(u.bytes > 1e8 ? 0 : 1)} MB. Transcripts and notes are always kept.`; }).catch(() => {});
   bindModels(v);
   bindProviders(v);

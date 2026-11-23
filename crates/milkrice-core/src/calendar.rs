@@ -287,6 +287,7 @@ mod imp {
                 calendar: cal.as_ref().map(|c| c.title().to_string()).unwrap_or_default(),
                 calendar_color: cal.as_ref().and_then(|c| calendar_hex(c)),
                 all_day: ev.isAllDay(),
+                recurring: ev.hasRecurrenceRules(),
             })
         }
     }

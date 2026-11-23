@@ -1,5 +1,5 @@
 //! Commands invoked from the UI. Long work runs on blocking threads so the UI never stalls.
-use crate::state::{AppState, Settings};
+use crate::state::{AppState, HiddenEvent, Settings};
 use crate::{recorder, scheduler};
 
 use milkrice_core::store::{ChatMessage, Folder, Meeting, MeetingSummary};
@@ -40,6 +40,8 @@ pub fn save_settings(app: AppHandle, state: State<AppState>, mut settings: Setti
     let old = state.settings();
     // Feeds (with their secret URLs) are managed only by add/remove_calendar_feed.
     settings.calendar_feeds = old.calendar_feeds.clone();
+    // Hidden meetings are managed only by hide_event / unhide_event.
+    settings.hidden_events = old.hidden_events.clone();
     state.save_settings(settings.clone()).map_err(e)?;
     if old.model_id != settings.model_id || old.language != settings.language {
         // Reload lazily on next recording; warm it up now in the background.
@@ -317,11 +319,12 @@ pub async fn providers(app: AppHandle, refresh: bool) -> R<Value> {
 #[tauri::command]
 pub fn upcoming_events(state: State<AppState>) -> Vec<Value> {
     let now = chrono::Utc::now();
+    let s = state.settings();
     state
         .events
         .lock()
         .iter()
-        .filter(|ev| ev.end > now - chrono::Duration::hours(2) && !ev.all_day)
+        .filter(|ev| ev.end > now - chrono::Duration::hours(2) && !ev.all_day && !s.is_hidden(ev))
         .take(40)
         .map(|ev| {
             json!({
@@ -331,6 +334,54 @@ pub fn upcoming_events(state: State<AppState>) -> Vec<Value> {
             })
         })
         .collect()
+}
+
+/// Meetings hidden from Coming up, newest first. One-offs drop off a day after they've passed.
+#[tauri::command]
+pub fn hidden_events(state: State<AppState>) -> Vec<HiddenEvent> {
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(1);
+    state.settings().hidden_events.into_iter().filter(|h| h.start.is_none_or(|t| t > cutoff)).rev().collect()
+}
+
+/// Hide a calendar event from Coming up, the menu bar, nudges and auto-record: the whole
+/// recurring series, or just this occurrence.
+#[tauri::command]
+pub fn hide_event(app: AppHandle, state: State<AppState>, event_id: String, series: bool) -> R<HiddenEvent> {
+    let ev = state.events.lock().iter().find(|e| e.id == event_id).cloned().ok_or("That event is no longer on your calendar")?;
+    let series = series && ev.recurring;
+    let h = HiddenEvent {
+        key: if series { ev.series_id().to_string() } else { ev.id.clone() },
+        title: ev.title.trim().to_string(),
+        series,
+        start: if series { None } else { Some(ev.start) },
+    };
+    let mut s = state.settings();
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(1);
+    s.hidden_events.retain(|x| x.key != h.key && x.start.is_none_or(|t| t > cutoff));
+    s.hidden_events.push(h.clone());
+    // A "meeting is starting" nudge for it goes too.
+    let nudged = state.prompt.lock().as_ref().and_then(|p| p.event.as_ref()).is_some_and(|pe| s.is_hidden(pe));
+    state.save_settings(s).map_err(e)?;
+    if nudged {
+        *state.prompt.lock() = None;
+        let _ = app.emit("prompt", Value::Null);
+    }
+    events_changed(&app);
+    Ok(h)
+}
+
+#[tauri::command]
+pub fn unhide_event(app: AppHandle, state: State<AppState>, key: String) -> R<()> {
+    let mut s = state.settings();
+    s.hidden_events.retain(|x| x.key != key);
+    state.save_settings(s).map_err(e)?;
+    events_changed(&app);
+    Ok(())
+}
+
+fn events_changed(app: &AppHandle) {
+    let _ = app.emit("events-updated", ());
+    crate::tray::refresh(app);
 }
 
 /// Subscribe to a read-only iCal feed (e.g. Google Calendar's secret address). Validated first.
