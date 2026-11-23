@@ -278,6 +278,7 @@ pub fn parse(text: &str, calendar_name: &str, owner_email: Option<&str>, from: D
                 calendar: calendar_name.to_string(),
                 calendar_color: None,
                 all_day: ad,
+                recurring: e.rrule.is_some(),
             });
         }
     }

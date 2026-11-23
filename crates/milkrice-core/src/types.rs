@@ -51,4 +51,14 @@ pub struct CalEvent {
     pub calendar: String,
     pub calendar_color: Option<String>,
     pub all_day: bool,
+    /// Part of a repeating series (every occurrence shares `series_id`).
+    #[serde(default)]
+    pub recurring: bool,
+}
+
+impl CalEvent {
+    /// The id shared by every occurrence of a recurring event: `id` minus its `@<start>` suffix.
+    pub fn series_id(&self) -> &str {
+        self.id.rsplit_once('@').map(|(s, _)| s).unwrap_or(&self.id)
+    }
 }

@@ -48,7 +48,10 @@
   const events = [
     { event: { id: "e1", title: "Design review", start: iso(now - 2 * 60e3), end: iso(now + 28 * 60e3), attendees: people, location: null, meeting_url: "https://meet.google.com/abc", calendar: "Work", calendar_color: null, all_day: false }, real: true, meeting_id: null },
     { event: { id: "e2", title: "Roadmap planning", start: iso(now + 2 * 3600e3), end: iso(now + 3 * 3600e3), attendees: people.slice(0, 2), location: null, meeting_url: null, calendar: "Work", calendar_color: null, all_day: false }, real: true, meeting_id: null },
+    { event: { id: "y1@1", title: "Yoga", start: iso(now + 4 * 3600e3), end: iso(now + 5 * 3600e3), attendees: [], location: "Studio", meeting_url: null, calendar: "Personal", calendar_color: null, all_day: false, recurring: true }, real: true, meeting_id: null },
   ];
+  let hidden = [];
+  const isHidden = (e) => hidden.some((h) => h.key === (h.series ? e.id.split("@")[0] : e.id));
   const handlers = {
     get_settings: () => db.settings,
     save_settings: ({ settings }) => (db.settings = settings),
@@ -66,7 +69,10 @@
     set_folder_series: ({ folderId: folder_id, on }) => { db.series = db.series.filter((f) => f !== folder_id); if (on) db.series.push(folder_id); },
     dismiss_folder_suggestion: ({ meetingId: meeting_id }) => { db.dismissed.push(meeting_id); },
     list_models: () => ({ models, active: db.settings.model_id, downloading: [], speaker_model: true }),
-    upcoming_events: () => events,
+    upcoming_events: () => events.filter((x) => !isHidden(x.event)),
+    hidden_events: () => [...hidden].reverse(),
+    hide_event: ({ eventId, series }) => { const e = events.find((x) => x.event.id === eventId).event; series = series && !!e.recurring; const h = { key: series ? e.id.split("@")[0] : e.id, title: e.title, series, start: series ? null : e.start }; hidden = hidden.filter((x) => x.key !== h.key).concat(h); return h; },
+    unhide_event: ({ key }) => { hidden = hidden.filter((x) => x.key !== key); },
     providers: () => ({
       providers: [
         { id: "claude", name: "Claude Haiku", available: true, signed_in: true, model: "haiku", detail: "Signed in with your Claude subscription" },

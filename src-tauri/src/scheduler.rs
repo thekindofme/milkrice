@@ -213,6 +213,7 @@ fn tick(app: &AppHandle, call_seen_at: &mut Option<Instant>) {
             starts_soon
                 && (!s.only_real_meetings || is_real_meeting(e))
                 && !e.all_day
+                && !s.is_hidden(e)
                 && state.store.event_flag(&e.id).is_none()
         });
         if let Some(ev) = due {

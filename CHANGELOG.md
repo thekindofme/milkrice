@@ -4,6 +4,7 @@ All notable changes to Milkrice are recorded here. The format follows [Keep a Ch
 
 ## Unreleased
 
+- Hide meetings from Coming up: right-click one (or use its ⋯ on Home) to hide every occurrence of a recurring meeting such as Yoga, or just this one, with Undo in the toast. Hidden meetings get no nudge and no auto-record; "N hidden" next to Coming up and Settings › Calendar list them to show again
 - iPhone sync (Settings › iPhone sync): pair Milkrice for iPhone (beta) with a QR code and a matching 6-digit code, then meetings sync both ways through iCloud Drive (or any shared folder), end-to-end encrypted with a key kept in each device's keychain. Meetings from the iPhone are marked in the sidebar, mirrored to Obsidian, and the Mac writes their notes with your chosen AI when the iPhone asks
 - Fix: the Obsidian section in Settings never finished loading ("Looking for vaults…"), so a vault could only be chosen during onboarding
 - Sync: the Mac keeps sending where each meeting was recorded, so a device paired later learns it, and never labels a meeting it received as recorded on the Mac

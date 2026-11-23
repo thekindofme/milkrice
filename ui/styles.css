@@ -521,3 +521,21 @@ body:has(#devPop) #sysWarn { display: none; }
 .pair-code { font: 600 34px/1.1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: 0.08em; margin: 4px 0 8px; }
 .pair-paste code { display: block; margin: 6px 0; padding: 6px 8px; font-size: 11px; word-break: break-all; background: var(--bg); border-radius: 6px; }
 .spin { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; border: 1.5px solid var(--line-2); border-top-color: var(--ember); border-radius: 50%; animation: spin 0.9s linear infinite; }
+
+/* Hiding calendar meetings: ⋯ on hover, undo toast, and the list of hidden ones. */
+.toast.has-action { display: flex; align-items: center; gap: 14px; pointer-events: auto; }
+.toast-act { border: 0; background: none; padding: 0; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.event-card .ev-more { width: 28px; height: 28px; opacity: 0; transition: opacity 0.12s; }
+.event-card:hover .ev-more, .event-card .ev-more:focus-visible { opacity: 1; }
+.section-links { display: inline-flex; gap: 14px; align-items: baseline; }
+.link.quiet { color: var(--ink-3); font-weight: 400; font-size: 12.5px; }
+.link.quiet:hover { color: var(--ink); }
+.hid-pop { width: 280px; padding: 6px 4px; }
+.hid-h { padding: 4px 10px 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+.hid-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 10px; border-radius: 7px; }
+.hid-row:hover { background: var(--paper-2); }
+.hid-row > span { min-width: 0; display: flex; flex-direction: column; }
+.hid-row b { font-weight: 550; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hid-row small { font-size: 12px; color: var(--ink-3); }
+#hiddenEvs .row { border-bottom: 0; padding-bottom: 8px; }
+.hid-list { margin: 0 0 12px; border: 1px solid var(--line); border-radius: var(--radius); padding: 4px; }
