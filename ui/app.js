@@ -702,7 +702,7 @@ function renderNote(v, soft) {
   const tplOpts = (S.templates.length ? S.templates : [{ id: "auto", name: "Auto" }])
     .map((t) => `<option value="${t.id}" ${t.id === m.template ? "selected" : ""}>${esc(t.name)}</option>`).join("");
   let h = `<div class="page"><div class="note-head">
-    <input id="titleInput" class="title-input" value="${esc(m.title)}" placeholder="Untitled meeting" spellcheck="false" />
+    <textarea id="titleInput" class="title-input" rows="1" placeholder="Untitled meeting" spellcheck="false">${esc(m.title)}</textarea>
     <div class="meta">
       <span class="chip">${ICON.cal}${esc(new Date(m.created_at).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }))} · ${fmtTime(m.created_at)}</span>
       ${m.duration_ms ? `<span class="chip">${fmtDur(m.duration_ms)}</span>` : ""}
@@ -947,6 +947,9 @@ function chatHtml(d) {
   return h + `</div>`;
 }
 
+// Long titles wrap onto more lines rather than being clipped, so the whole title is always visible.
+function fitTitle(el) { if (!el) return; el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; }
+window.addEventListener("resize", () => fitTitle($("#titleInput")));
 function autoGrow(el) { el.style.height = "auto"; el.style.height = Math.max(320, el.scrollHeight) + "px"; }
 
 let saveTimer = null;
@@ -958,7 +961,13 @@ function bindNote(v) {
   const sn = v.querySelector("[data-sug-no]");
   if (sn) sn.onclick = async () => { await invoke("dismiss_folder_suggestion", { meetingId: m.id }).catch(fail); await refreshDetail(); };
   const title = $("#titleInput");
-  title.oninput = () => { clearTimeout(title._t); title._t = setTimeout(() => invoke("update_meeting", { id: m.id, field: "title", value: title.value }).then(loadMeetings), 400); m.title = title.value; };
+  fitTitle(title);
+  // A title is one line of text that wraps to fit, so Return leaves the field instead of adding a line break.
+  title.onkeydown = (e) => { if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); title.blur(); } };
+  title.oninput = () => {
+    if (/[\r\n]/.test(title.value)) title.value = title.value.replace(/\s*[\r\n]+\s*/g, " ");
+    fitTitle(title);
+    clearTimeout(title._t); title._t = setTimeout(() => invoke("update_meeting", { id: m.id, field: "title", value: title.value }).then(loadMeetings), 400); m.title = title.value; };
   const ed = $("#notesEditor");
   if (ed) ed.oninput = () => {
     autoGrow(ed);
