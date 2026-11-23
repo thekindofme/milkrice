@@ -21,7 +21,7 @@ CC-BY-4.0: <https://creativecommons.org/licenses/by/4.0/>
 
 ## Libraries
 
-Rust dependencies are listed with exact versions in `Cargo.lock`; each is under its own license (predominantly MIT and Apache-2.0). Notable ones: Tauri (MIT or Apache-2.0), transcribe-rs (MIT), ort / ONNX Runtime (MIT, Apache-2.0), whisper-rs and whisper.cpp (Unlicense, MIT), rusqlite and SQLite (MIT, public domain), cpal (Apache-2.0), screencapturekit-rs (MIT or Apache-2.0), reqwest and rustls (MIT or Apache-2.0).
+Rust dependencies are listed with exact versions in `Cargo.lock`; each is under its own license (predominantly MIT and Apache-2.0). Notable ones: Tauri (MIT or Apache-2.0), transcribe-rs (MIT), ort / ONNX Runtime (MIT, Apache-2.0), whisper-rs and whisper.cpp (Unlicense, MIT), rusqlite and SQLite (MIT, public domain), cpal (Apache-2.0), aec3 (MIT or BSD-3-Clause; a Rust port of WebRTC's AEC3, with WebRTC's patent grant), screencapturekit-rs (MIT or Apache-2.0), reqwest and rustls (MIT or Apache-2.0).
 
 The website uses the Newsreader typeface (SIL Open Font License 1.1).
 

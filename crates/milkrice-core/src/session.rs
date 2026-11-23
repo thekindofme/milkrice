@@ -287,14 +287,16 @@ impl Session {
         let seg_elapsed = elapsed.clone();
         let vad_cfg = cfg.vad.clone();
         let offset = cfg.offset_ms;
-        let mut recorder = cfg.record_to.as_deref().and_then(|p| match crate::audio_rec::AudioRecorder::create(p) {
-            Ok(r) => Some(r),
-            Err(e) => {
-                log::warn!("not keeping audio: {e}");
-                None
-            }
-        });
+        let record_to = cfg.record_to.clone();
         let segmenter = std::thread::Builder::new().name("milkrice-vad".into()).spawn(move || {
+            // Created on this thread: the echo canceller inside isn't Send.
+            let mut recorder = record_to.as_deref().and_then(|p| match crate::audio_rec::AudioRecorder::create(p) {
+                Ok(r) => Some(r),
+                Err(e) => {
+                    log::warn!("not keeping audio: {e}");
+                    None
+                }
+            });
             let mut restarter = restarter;
             let mut watch: [SourceWatch; 2] = Default::default();
             let mut last_watch = Instant::now();
