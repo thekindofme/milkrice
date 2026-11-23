@@ -61,7 +61,7 @@
       <ul>
         <li><span class="path">milkrice.sqlite</span>: your notes, AI-written summaries, transcripts, speaker names, chat history about meetings, and your settings (including any calendar feed addresses you add).</li>
         <li><span class="path">models/</span>: the speech and speaker models you downloaded.</li>
-        <li><span class="path">audio/</span>: recordings, only if you turn recordings on (they're off by default). Each is a compressed .m4a with your microphone on one channel and the call audio on the other, about 15 MB an hour. Milkrice deletes recordings older than your retention setting (30 days by default; 0 keeps them until you delete them), and deleting a meeting deletes its recordings.</li>
+        <li><span class="path">audio/</span>: recordings, only if you turn recordings on (they're off by default). Each is a compressed .m4a with your microphone on one channel and the call audio on the other, about 60 MB an hour. Milkrice deletes recordings older than your retention setting (30 days by default; 0 keeps them until you delete them), and deleting a meeting deletes its recordings.</li>
       </ul>
       <p>When recordings are off, audio is processed in memory and discarded once it has been transcribed. While a recording is being made, uncompressed audio is written to the same folder and converted when the meeting ends. Requests to an AI provider run in a temporary folder (<span class="path">milkrice-llm</span> in the system temporary directory); the output file used for Codex is deleted after it's read.</p>
       <p>To remove everything, quit Milkrice and delete the folder above.</p>

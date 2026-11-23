@@ -204,8 +204,8 @@ pub fn start_mic(
         .spawn(move || {
             'outer: for chunk in raw_rx.iter() {
                 let mut alive = true;
-                resampler.push(&chunk, |samples| {
-                    if alive && tx.send(AudioFrame { source: AudioSource::Mic, samples }).is_err() {
+                resampler.push(&chunk, |samples, hires| {
+                    if alive && tx.send(AudioFrame { source: AudioSource::Mic, samples, hires }).is_err() {
                         alive = false;
                     }
                 });

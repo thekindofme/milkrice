@@ -593,7 +593,7 @@ pub fn selftest(app: AppHandle, dir: std::path::PathBuf) {
             for i in (0..mic.len().max(sys.len())).step_by(1600) {
                 for (src, b) in [(milkrice_core::AudioSource::Mic, &mic), (milkrice_core::AudioSource::System, &sys)] {
                     if i < b.len() {
-                        tx.send(milkrice_core::AudioFrame { source: src, samples: b[i..(i + 1600).min(b.len())].to_vec() })?;
+                        tx.send(milkrice_core::AudioFrame { source: src, samples: b[i..(i + 1600).min(b.len())].to_vec(), hires: Vec::new() })?;
                     }
                 }
             }
@@ -639,7 +639,7 @@ fn test_audio_source(
         while !stop2.load(Ordering::Relaxed) {
             for (src, b) in [(milkrice_core::AudioSource::Mic, &mic), (milkrice_core::AudioSource::System, &sys)] {
                 let chunk = if i < b.len() { b[i..(i + 1600).min(b.len())].to_vec() } else { vec![0.0; 1600] };
-                if tx.send(milkrice_core::AudioFrame { source: src, samples: chunk }).is_err() {
+                if tx.send(milkrice_core::AudioFrame { source: src, samples: chunk, hires: Vec::new() }).is_err() {
                     return;
                 }
             }

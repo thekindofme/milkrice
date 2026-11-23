@@ -71,7 +71,7 @@ Milkrice checks GitHub for new releases shortly after launch (and from "Check fo
 
 ```
 crates/milkrice-core   the engine (no UI)
-  audio/             mic (cpal) + system audio (ScreenCaptureKit) → 16 kHz mono
+  audio/             mic (cpal) + system audio (Core Audio process tap, ScreenCaptureKit fallback) → 16 kHz mono
   vad.rs             adaptive energy VAD, cuts streams into utterances
   stt.rs, catalog.rs transcribe-rs engines + model catalog
   models.rs          download / unpack / delete models

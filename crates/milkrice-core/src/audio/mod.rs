@@ -1,5 +1,6 @@
 //! Audio capture. OWNER: audio worker.
-//! Mic via cpal, system audio (everyone else on the call) via ScreenCaptureKit on macOS.
+//! Mic via cpal. System audio (everyone else on the call) via a Core Audio process tap on
+//! macOS, which also hears iPhone/FaceTime calls; ScreenCaptureKit is the fallback.
 //! Every frame sent downstream is 16 kHz mono f32 (see `crate::SAMPLE_RATE`).
 use crate::types::{AudioFrame, AudioSource};
 use anyhow::Result;
@@ -8,7 +9,23 @@ mod mic;
 mod resample;
 #[cfg(target_os = "macos")]
 mod system;
+#[cfg(target_os = "macos")]
+mod tap;
 use crossbeam_channel::Sender;
+
+static KEEP_RECORDING_AUDIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// While on, captures started from now on also deliver 48 kHz audio (`AudioFrame::hires`) for
+/// a kept recording. Off (transcription only) costs nothing extra.
+pub fn set_keep_recording_audio(on: bool) {
+    KEEP_RECORDING_AUDIO.store(on, std::sync::atomic::Ordering::SeqCst);
+}
+
+pub(crate) fn keep_recording_audio() -> bool {
+    KEEP_RECORDING_AUDIO.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+pub use resample::RECORD_RATE;
 
 /// Stops capture when dropped or when `stop()` is called.
 pub struct CaptureHandle {
@@ -124,6 +141,13 @@ pub fn start_system_watched(tx: Sender<AudioFrame>, errors: CaptureErrors) -> Re
 fn start_system_inner(tx: Sender<AudioFrame>, errors: Option<CaptureErrors>) -> Result<CaptureHandle> {
     #[cfg(target_os = "macos")]
     {
+        // MILKRICE_SYSTEM_CAPTURE=sck forces the old ScreenCaptureKit path (diagnostics).
+        if std::env::var("MILKRICE_SYSTEM_CAPTURE").as_deref() != Ok("sck") {
+            match tap::start(tx.clone(), errors.clone()) {
+                Ok(h) => return Ok(h),
+                Err(e) => log::warn!("process tap unavailable ({e:#}); using ScreenCaptureKit"),
+            }
+        }
         system::start(tx, errors)
     }
     #[cfg(not(target_os = "macos"))]
@@ -133,11 +157,12 @@ fn start_system_inner(tx: Sender<AudioFrame>, errors: Option<CaptureErrors>) -> 
     }
 }
 
-/// Whether the app may capture system audio (Screen Recording permission on macOS).
+/// Whether the app may capture system audio: System Audio Recording (process tap) or Screen
+/// Recording (ScreenCaptureKit fallback) on macOS.
 pub fn system_audio_permitted() -> bool {
     #[cfg(target_os = "macos")]
     {
-        system::permitted()
+        tap::permission() == tap::TapPermission::Granted || system::permitted()
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -145,11 +170,14 @@ pub fn system_audio_permitted() -> bool {
     }
 }
 
-/// Ask macOS for system audio permission (opens the prompt / Settings once).
+/// Ask macOS for system audio permission (opens the prompt / Settings once). Blocks until the
+/// System Audio Recording prompt is answered.
 pub fn request_system_audio_permission() -> bool {
     #[cfg(target_os = "macos")]
     {
-        system::request_permission()
+        // The tap's own permission covers calls too; Screen Recording keeps the fallback working.
+        let tap = tap::request_permission() == tap::TapPermission::Granted;
+        tap || system::request_permission()
     }
     #[cfg(not(target_os = "macos"))]
     {

@@ -1,5 +1,7 @@
 //! Opt-in local recording of a meeting: mic on the left channel, call audio on the right,
-//! saved as AAC (.m4a, ~20 MB/hour) next to the transcript so moments can be replayed.
+//! 48 kHz, saved as AAC (.m4a, ~58 MB/hour) next to the transcript so moments can be replayed.
+//! Transcription keeps using its own 16 kHz stream; this one is for listening.
+use crate::audio::RECORD_RATE;
 use crate::types::{AudioSource, SAMPLE_RATE};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
@@ -10,10 +12,28 @@ pub struct AudioRecorder {
     sys: Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>>,
     mic_n: u64,
     sys_n: u64,
+    last: [f32; 2],
 }
 
 fn spec() -> hound::WavSpec {
-    hound::WavSpec { channels: 1, sample_rate: SAMPLE_RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int }
+    hound::WavSpec { channels: 1, sample_rate: RECORD_RATE, bits_per_sample: 16, sample_format: hound::SampleFormat::Int }
+}
+
+/// AAC bitrate for the stereo file (64 kbps per side).
+const AAC_BITRATE: &str = "128000";
+
+/// 16 kHz -> 48 kHz by linear interpolation, for sources that only have the transcription
+/// stream (test playback). Live captures provide real 48 kHz audio.
+fn upsample(samples: &[f32], last: &mut f32) -> Vec<f32> {
+    let k = (RECORD_RATE / SAMPLE_RATE) as usize;
+    let mut out = Vec::with_capacity(samples.len() * k);
+    for &s in samples {
+        for i in 1..=k {
+            out.push(*last + (s - *last) * i as f32 / k as f32);
+        }
+        *last = s;
+    }
+    out
 }
 
 fn to_i16(v: f32) -> i16 {
@@ -27,10 +47,21 @@ impl AudioRecorder {
             std::fs::create_dir_all(dir)?;
         }
         let mic = hound::WavWriter::create(base.with_extension("mic.wav"), spec())?;
-        Ok(Self { base: base.to_path_buf(), mic: Some(mic), sys: None, mic_n: 0, sys_n: 0 })
+        Ok(Self { base: base.to_path_buf(), mic: Some(mic), sys: None, mic_n: 0, sys_n: 0, last: [0.0; 2] })
     }
 
-    pub fn write(&mut self, source: AudioSource, samples: &[f32]) {
+    /// `samples` is the 16 kHz transcription stream, `hires` the 48 kHz copy (preferred).
+    pub fn write(&mut self, source: AudioSource, samples: &[f32], hires: &[f32]) {
+        let up;
+        let samples = if hires.is_empty() && !samples.is_empty() {
+            up = upsample(samples, &mut self.last[source as usize]);
+            &up[..]
+        } else {
+            if let Some(v) = hires.last() {
+                self.last[source as usize] = *v;
+            }
+            hires
+        };
         match source {
             AudioSource::Mic => {
                 if let Some(w) = self.mic.as_mut() {
@@ -106,7 +137,7 @@ impl AudioRecorder {
         let _ = std::fs::remove_file(&sys_path);
         let m4a = self.base.with_extension("m4a");
         let ok = std::process::Command::new("/usr/bin/afconvert")
-            .args(["-f", "m4af", "-d", "aac", "-b", "64000"])
+            .args(["-f", "m4af", "-d", "aac", "-b", AAC_BITRATE])
             .arg(&stereo)
             .arg(&m4a)
             .status()
@@ -196,9 +227,10 @@ mod tests {
         let base = dir.join("0");
         let mut r = AudioRecorder::create(&base).unwrap();
         let tone: Vec<f32> = (0..16_000).map(|i| (i as f32 * 0.05).sin() * 0.3).collect();
-        r.write(AudioSource::Mic, &tone);
-        r.write(AudioSource::System, &tone[..8000]); // starts late -> padded
-        r.write(AudioSource::Mic, &tone);
+        let hi: Vec<f32> = (0..48_000).map(|i| (i as f32 * 0.02).sin() * 0.3).collect();
+        r.write(AudioSource::Mic, &tone, &hi);
+        r.write(AudioSource::System, &tone[..8000], &[]); // starts late -> padded; upsampled
+        r.write(AudioSource::Mic, &tone, &hi);
         let out = r.finish().unwrap();
         assert!(out.is_file());
         assert!(!base.with_extension("mic.wav").exists());

@@ -90,7 +90,7 @@ fn simulate(model: &str, mic: &Path, system: &Path, provider: Option<Provider>) 
         for (src, buf) in [(AudioSource::Mic, &mic_s), (AudioSource::System, &sys_s)] {
             if i < buf.len() {
                 let end = (i + 1600).min(buf.len());
-                tx.send(AudioFrame { source: src, samples: buf[i..end].to_vec() })?;
+                tx.send(AudioFrame { source: src, samples: buf[i..end].to_vec(), hires: Vec::new() })?;
             }
         }
     }

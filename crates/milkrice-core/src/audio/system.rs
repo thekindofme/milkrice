@@ -93,9 +93,9 @@ impl Handler {
             }
         }
         if let Some(r) = resampler.as_mut() {
-            r.push(mono, |samples| {
+            r.push(mono, |samples, hires| {
                 if !*closed
-                    && self.tx.send(AudioFrame { source: AudioSource::System, samples }).is_err()
+                    && self.tx.send(AudioFrame { source: AudioSource::System, samples, hires }).is_err()
                 {
                     *closed = true;
                 }

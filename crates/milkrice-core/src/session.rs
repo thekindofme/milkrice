@@ -201,6 +201,8 @@ impl Session {
         embedder: Option<Arc<Mutex<SpeakerEmbedder>>>,
         sink: Arc<dyn SessionSink>,
     ) -> Result<Self> {
+        // Kept recordings get their own 48 kHz stream; transcription-only sessions skip it.
+        audio::set_keep_recording_audio(cfg.record_to.is_some());
         let (frame_tx, frame_rx) = bounded::<AudioFrame>(512);
         let (err_tx, err_rx) = bounded::<(AudioSource, String)>(16);
         let mut captures = Captures::default();
@@ -346,7 +348,7 @@ impl Session {
                     continue;
                 }
                 if let Some(r) = recorder.as_mut() {
-                    r.write(frame.source, &frame.samples);
+                    r.write(frame.source, &frame.samples, &frame.hires);
                 }
                 let lvl = frame.samples.iter().fold(0f32, |m, v| m.max(v.abs()));
                 match frame.source {
