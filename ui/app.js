@@ -462,6 +462,7 @@ function renderBanner(force) {
 // ------------------------------------------------------------------ views
 function render(soft) {
   renderBanner();
+  if (S.view !== "note" && player.meeting) stopPlayer();
   $("#homeBtn").hidden = S.view === "home" || S.view === "onboarding";
   const v = $("#view");
   if (S.view === "onboarding") return renderOnboarding(v);
@@ -882,36 +883,74 @@ function speakersHtml(d) {
 
 function audioBarHtml(d) {
   if (!(d.audio || []).length) return "";
-  return `<div class="audio-bar"><audio id="meetingAudio" preload="metadata"></audio>
-    <button class="icon-btn" id="audioToggle" title="Play">${ICON.play}</button>
-    <span class="hint" id="audioPos">Recording kept on this Mac · click any timestamp to replay</span>
+  const playing = player.meeting === S.meetingId && !player.el.paused;
+  return `<div class="audio-bar">
+    <button class="icon-btn" id="audioToggle" title="${playing ? "Pause" : "Play"}">${playing ? ICON.pause : ICON.play}</button>
+    <span class="hint" id="audioPos">${player.meeting === S.meetingId && player.el.currentTime ? `Playing ${fmtTs(player.el.currentTime * 1000)}` : "Recording kept on this Mac · click any timestamp to replay"}</span>
     <span style="flex:1"></span><button class="link" id="audioDelete">Delete recording</button></div>`;
 }
 
+// One audio element for the whole app, outside the re-rendered DOM: a re-render used to make a
+// fresh <audio> while the old, detached one kept playing, so two recordings could play at once.
+const player = { el: new Audio(), meeting: null, token: 0 };
+player.el.preload = "metadata";
+player.el.onplay = player.el.onpause = () => {
+  const tg = $("#audioToggle");
+  if (tg && player.meeting === S.meetingId) { tg.innerHTML = player.el.paused ? ICON.play : ICON.pause; tg.title = player.el.paused ? "Play" : "Pause"; }
+};
+player.el.ontimeupdate = () => {
+  const el = $("#audioPos");
+  if (el && player.meeting === S.meetingId) el.textContent = `Playing ${fmtTs(player.el.currentTime * 1000)}`;
+};
+// play() rejects with AbortError whenever a newer play/pause/seek interrupts it: not an error.
+const playQuietly = () => player.el.play().catch((e) => { if (e?.name !== "AbortError") fail(e); });
+
+function stopPlayer() {
+  player.token++;
+  player.el.pause();
+  if (player.el.dataset.src) { delete player.el.dataset.src; player.el.removeAttribute("src"); player.el.load(); }
+  player.meeting = null;
+}
+
 // Play the kept recording from a transcript offset (recordings may be split by resumes).
+// Only the latest request wins, however fast the clicks come.
 function playAt(ms) {
   const parts = S.detail?.audio || [];
   if (!parts.length) return;
   let part = parts[0];
   for (const p of parts) if (p.offset_ms <= ms) part = p;
-  const a = $("#meetingAudio");
-  if (!a) return;
+  const a = player.el;
+  const token = ++player.token;
+  player.meeting = S.meetingId;
+  const seek = () => {
+    if (token !== player.token) return;
+    a.currentTime = Math.max(0, (ms - part.offset_ms) / 1000 - 0.5);
+    playQuietly();
+  };
   const src = T.core.convertFileSrc(part.path);
-  const seek = () => { a.currentTime = Math.max(0, (ms - part.offset_ms) / 1000 - 0.5); a.play().catch(fail); };
-  if (a.dataset.src !== src) { a.dataset.src = src; a.src = src; a.addEventListener("loadedmetadata", seek, { once: true }); } else seek();
+  if (a.dataset.src !== src) {
+    a.pause();
+    a.dataset.src = src;
+    a.src = src;
+    a.addEventListener("loadedmetadata", seek, { once: true });
+  } else if (a.readyState >= 1) seek();
+  else a.addEventListener("loadedmetadata", seek, { once: true });
 }
 
 function bindAudio() {
-  const a = $("#meetingAudio");
-  if (!a) return;
   const tg = $("#audioToggle");
-  tg.onclick = () => { if (!a.src) playAt(S.detail.segments[0]?.start_ms || 0); else if (a.paused) a.play(); else a.pause(); };
-  a.onplay = () => (tg.innerHTML = ICON.pause);
-  a.onpause = () => (tg.innerHTML = ICON.play);
-  a.ontimeupdate = () => { const el = $("#audioPos"); if (el) el.textContent = `Playing ${fmtTs(a.currentTime * 1000)}`; };
+  // Leaving the meeting (or its recording going away) stops playback.
+  if (!tg) { if (player.meeting) stopPlayer(); return; }
+  if (player.meeting && player.meeting !== S.meetingId) stopPlayer();
+  tg.onclick = () => {
+    if (player.meeting !== S.meetingId || !player.el.dataset.src) playAt(S.detail.segments[0]?.start_ms || 0);
+    else if (player.el.paused) { player.token++; playQuietly(); }
+    else { player.token++; player.el.pause(); }
+  };
   document.querySelectorAll("[data-play]").forEach((b) => (b.onclick = () => playAt(Number(b.dataset.play))));
   $("#audioDelete").onclick = async () => {
     if (!confirm("Delete this meeting's recording? The transcript and notes stay.")) return;
+    stopPlayer();
     await invoke("delete_meeting_audio", { id: S.meetingId }).catch(fail);
     S.detail.audio = []; render();
   };
@@ -1412,7 +1451,7 @@ function renderSettings(v) {
   <div class="row"><div class="rl"><b>Microphone</b><span>Your voice is always labelled as you.</span></div><select class="field" id="micSel"><option value="">System default</option></select></div>
   <div class="row"><div class="rl"><b>Capture other participants</b><span>Transcribes everyone else on the call, not just you.</span></div>${sw("capture_system", s.capture_system)}</div>
   <div class="row"><div class="rl"><b>Recognise speakers</b><span>Tells voices apart locally; names come from the invite.</span></div>${sw("diarize", s.diarize)}</div>
-  <div class="row"><div class="rl"><b>Keep recordings</b><span>Off by default. When on, each meeting's audio is saved on this Mac (you left, the call right, ~20 MB/hour) so you can replay any moment from the transcript.</span></div>${sw("keep_audio", s.keep_audio)}</div>
+  <div class="row"><div class="rl"><b>Keep recordings</b><span>Off by default. When on, each meeting's audio is saved on this Mac (you left, the call right, about 60 MB an hour) so you can replay any moment from the transcript.</span></div>${sw("keep_audio", s.keep_audio)}</div>
   ${s.keep_audio ? `<div class="row"><div class="rl"><b>Delete recordings after</b><span id="audioUsage">Transcripts and notes are always kept.</span></div>${seg("audio_retention_days", String(s.audio_retention_days), [["7", "7 days"], ["30", "30 days"], ["90", "90 days"], ["0", "Never"]])}</div>` : ""}
   <div class="row"><div class="rl"><b>Your name</b><span>Used for your lines in transcripts.</span></div><input class="field" id="userName" value="${esc(s.user_name)}" placeholder="Me" /></div>
   </div>`;
