@@ -214,6 +214,76 @@ fn recordings_in(dir: &Path) -> Vec<(u64, PathBuf)> {
     v
 }
 
+/// Loudness outline of a kept recording for the playback timeline: one level (0-255, a
+/// -60..0 dB scale) per `PEAK_STEP_MS` for each side (mic, call).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct Peaks {
+    pub step_ms: u32,
+    pub mic: Vec<u8>,
+    pub call: Vec<u8>,
+}
+
+pub const PEAK_STEP_MS: u32 = 100;
+/// Decode rate for the outline: plenty for loudness, and fast to decode.
+const PEAK_RATE: u32 = 8_000;
+
+fn level(sum_sq: f64, n: usize) -> u8 {
+    if n == 0 {
+        return 0;
+    }
+    let db = 10.0 * (sum_sq / n as f64 + 1e-12).log10();
+    (((db + 60.0) / 60.0).clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// Outline of the recording at `path`, cached next to it (`<offset>.peaks.json`).
+pub fn peaks(path: &Path) -> Result<Peaks> {
+    let cache = path.with_extension("peaks.json");
+    if let Ok(p) = std::fs::read(&cache).map_err(anyhow::Error::from).and_then(|b| Ok(serde_json::from_slice::<Peaks>(&b)?)) {
+        if p.step_ms == PEAK_STEP_MS {
+            return Ok(p);
+        }
+    }
+    let tmp = path.with_extension("peaks.tmp.wav");
+    let ok = std::process::Command::new("/usr/bin/afconvert")
+        .args(["-f", "WAVE", "-d", &format!("LEI16@{PEAK_RATE}")])
+        .arg(path)
+        .arg(&tmp)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    anyhow::ensure!(ok, "could not decode {}", path.display());
+    let result = (|| {
+        let mut r = hound::WavReader::open(&tmp)?;
+        let ch = r.spec().channels.max(1) as usize;
+        let step = (r.spec().sample_rate as u64 * PEAK_STEP_MS as u64 / 1000) as usize * ch;
+        let mut p = Peaks { step_ms: PEAK_STEP_MS, mic: Vec::new(), call: Vec::new() };
+        let (mut a, mut b, mut n) = (0f64, 0f64, 0usize);
+        for (i, s) in r.samples::<i16>().enumerate() {
+            let v = s? as f64 / 32768.0;
+            if i % ch == 0 {
+                a += v * v;
+                n += 1;
+            } else if i % ch == 1 {
+                b += v * v;
+            }
+            if (i + 1) % step == 0 {
+                p.mic.push(level(a, n));
+                p.call.push(if ch > 1 { level(b, n) } else { 0 });
+                (a, b, n) = (0.0, 0.0, 0);
+            }
+        }
+        if n > 0 {
+            p.mic.push(level(a, n));
+            p.call.push(if ch > 1 { level(b, n) } else { 0 });
+        }
+        Ok::<_, anyhow::Error>(p)
+    })();
+    let _ = std::fs::remove_file(&tmp);
+    let p = result?;
+    let _ = std::fs::write(&cache, serde_json::to_vec(&p)?);
+    Ok(p)
+}
+
 pub fn delete_recordings(meeting_id: &str) -> Result<()> {
     anyhow::ensure!(valid_id(meeting_id), "invalid meeting id");
     let dir = crate::paths::audio_dir().join(meeting_id);
@@ -299,6 +369,12 @@ mod tests {
         let out = r.finish().unwrap();
         assert!(out.is_file());
         assert!(!base.with_extension("rec.wav").exists());
+        let p = peaks(&out).unwrap();
+        // ~2 s of audio at 100 ms steps; the call side only joins after the first second.
+        assert!((19..=22).contains(&p.mic.len()), "{} steps", p.mic.len());
+        assert!(p.mic[5] > 150 && p.call[5] < 50 && p.call[12] > 150, "{p:?}");
+        assert_eq!(peaks(&out).unwrap(), p, "cached outline differs");
+        assert!(recordings_in(&dir).len() == 1, "the cache must not be listed as a recording");
         assert!(std::fs::metadata(&out).unwrap().len() > 1000);
         let _ = std::fs::remove_dir_all(&dir);
     }

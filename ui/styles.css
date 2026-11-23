@@ -342,7 +342,18 @@ body:has(#devPop) #sysWarn { display: none; }
 .gcal-form { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 4px; }
 .gcal-form #feedUrl { flex: 2 1 320px; max-width: none; }
 .gcal-form #feedEmail { flex: 1 1 200px; max-width: none; }
-.audio-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 10px; margin-bottom: 16px; border-radius: 10px; background: var(--paper-2); }
+.audio-bar { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px 6px 10px; margin-bottom: 16px; border-radius: 10px; background: var(--paper-2); }
+.audio-bar .ab-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.audio-bar .ab-foot { padding-left: 2px; }
+.ab-time { font-family: var(--mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; flex: none; }
+.ab-time.dim { color: var(--ink-3); }
+.tl { position: relative; flex: 1; min-width: 0; height: 40px; cursor: pointer; touch-action: none; border-radius: 6px; outline: none; }
+.tl:focus-visible { box-shadow: 0 0 0 2px var(--line-2); }
+.tl canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.tl-tip { position: absolute; bottom: calc(100% + 4px); padding: 2px 7px; border-radius: 6px; background: var(--ink); color: var(--paper); font-size: 11.5px; white-space: nowrap; pointer-events: none; }
+.tl-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--ink-2); min-width: 0; }
+.tl-key { display: inline-flex; align-items: center; gap: 5px; }
+.tl-key i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .audio-bar .link { color: var(--ink-3); font-size: 12.5px; }
 .audio-bar .link:hover { color: var(--ember); }
 .ts-play { border: 0; background: none; padding: 0; font: inherit; color: inherit; }

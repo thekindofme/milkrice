@@ -885,10 +885,166 @@ function audioBarHtml(d) {
   if (!(d.audio || []).length) return "";
   const playing = player.meeting === S.meetingId && !player.el.paused;
   return `<div class="audio-bar">
-    <button class="icon-btn" id="audioToggle" title="${playing ? "Pause" : "Play"}">${playing ? ICON.pause : ICON.play}</button>
-    <span class="hint" id="audioPos">${player.meeting === S.meetingId && player.el.currentTime ? `Playing ${fmtTs(player.el.currentTime * 1000)}` : "Recording kept on this Mac · click any timestamp to replay"}</span>
-    <span style="flex:1"></span><button class="link" id="audioDelete">Delete recording</button></div>`;
+    <div class="ab-row">
+      <button class="icon-btn" id="audioToggle" title="${playing ? "Pause" : "Play"}">${playing ? ICON.pause : ICON.play}</button>
+      <span class="ab-time" id="audioPos">${fmtTs(player.meeting === S.meetingId ? playerMs() : 0)}</span>
+      <div class="tl" id="tl" tabindex="0" role="slider" aria-label="Recording position" title="Click or drag to jump · ←/→ skip 5 s">
+        <canvas id="tlCanvas"></canvas><div class="tl-tip" id="tlTip" hidden></div>
+      </div>
+      <span class="ab-time dim" id="audioLen">${fmtTs(timelineMs(d))}</span>
+    </div>
+    <div class="ab-row ab-foot"><span class="tl-legend" id="tlLegend">${timelineLegendHtml(d)}</span>
+      <span style="flex:1"></span><button class="link" id="audioDelete">Delete recording</button></div></div>`;
 }
+
+// ------------------------------------------------------------------ playback timeline
+// Loudness outlines of the kept recordings, per meeting (fetched once, drawn on every render).
+const peaksCache = { id: null, n: 0, parts: null };
+
+function loadPeaks(d) {
+  const n = (d.audio || []).length;
+  if (peaksCache.id === S.meetingId && peaksCache.n === n) return;
+  const id = S.meetingId;
+  Object.assign(peaksCache, { id, n, parts: null });
+  invoke("meeting_audio_peaks", { id }).then((parts) => {
+    if (peaksCache.id !== id) return;
+    peaksCache.parts = parts || [];
+    const len = $("#audioLen");
+    if (len && S.detail) len.textContent = fmtTs(timelineMs(S.detail));
+    drawTimeline();
+  }).catch(() => {});
+}
+
+// Meeting length on the timeline: the transcript or the recordings, whichever runs longer.
+function timelineMs(d) {
+  let end = 0;
+  for (const s of d.segments || []) end = Math.max(end, s.end_ms);
+  for (const p of (peaksCache.id === S.meetingId && peaksCache.parts) || []) end = Math.max(end, p.offset_ms + p.mic.length * p.step_ms);
+  return Math.max(end, 1000);
+}
+
+// Where the player is, on the meeting timeline.
+function playerMs() {
+  const parts = S.detail?.audio || [];
+  const part = parts.find((p) => T.core.convertFileSrc(p.path) === player.el.dataset.src);
+  return part ? part.offset_ms + player.el.currentTime * 1000 : 0;
+}
+
+function speakerAt(d, ms) {
+  for (const s of d.segments || []) if (s.start_ms <= ms && ms < s.end_ms) return s.speaker;
+  return null;
+}
+
+function timelineLegendHtml(d) {
+  const keys = [...new Set((d.segments || []).map((s) => s.speaker))];
+  return keys.map((k) => `<span class="tl-key"><i style="background:${speakerColor(k)}"></i>${esc(speakerName(k, d.meeting))}</span>`).join("");
+}
+
+// CSS colour (incl. var(--x)) -> canvas colour.
+function resolveColor(c) {
+  const el = document.createElement("i");
+  el.style.color = c;
+  el.style.display = "none";
+  document.body.appendChild(el);
+  const v = getComputedStyle(el).color;
+  el.remove();
+  return v;
+}
+
+function drawTimeline() {
+  const d = S.detail, cv = $("#tlCanvas");
+  if (!d || !cv) return;
+  const box = cv.parentElement.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  const w = Math.max(1, Math.round(box.width)), h = Math.max(1, Math.round(box.height));
+  if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  const total = timelineMs(d);
+  const parts = (peaksCache.id === S.meetingId && peaksCache.parts) || [];
+  const colors = {};
+  const color = (k) => (colors[k] ??= resolveColor(k === null ? "var(--ink-3)" : speakerColor(k)));
+  const laneH = 4, waveH = h - laneH - 3, mid = waveH / 2;
+  const head = player.meeting === S.meetingId ? playerMs() : -1;
+  const BAR = 3, GAP = 1;
+  // Speaker lane: who is talking, straight from the transcript.
+  for (const s of d.segments || []) {
+    const x0 = (s.start_ms / total) * w, x1 = (s.end_ms / total) * w;
+    g.fillStyle = color(s.speaker);
+    g.globalAlpha = 0.9;
+    g.fillRect(x0, h - laneH, Math.max(1, x1 - x0 - 0.5), laneH);
+  }
+  // Loudness bars, coloured by the speaker at that moment (or by side when the transcript has
+  // nothing there), dimmed ahead of the playhead.
+  for (let x = 0; x < w; x += BAR + GAP) {
+    const t0 = (x / w) * total, t1 = ((x + BAR) / w) * total;
+    let mic = 0, call = 0;
+    for (const p of parts) {
+      if (!p.step_ms) continue;
+      const i0 = Math.max(0, Math.floor((t0 - p.offset_ms) / p.step_ms));
+      const i1 = Math.min(p.mic.length, Math.ceil((t1 - p.offset_ms) / p.step_ms));
+      for (let i = i0; i < i1; i++) { mic = Math.max(mic, p.mic[i]); call = Math.max(call, p.call[i]); }
+    }
+    const lvl = Math.max(mic, call) / 255;
+    if (lvl <= 0.02) continue;
+    const who = speakerAt(d, (t0 + t1) / 2) ?? (mic > call ? "me" : null);
+    const bh = Math.max(2, lvl * lvl * waveH);
+    g.globalAlpha = head >= 0 && t0 <= head ? 1 : 0.42;
+    g.fillStyle = color(who);
+    g.fillRect(x, mid - bh / 2, BAR, bh);
+  }
+  if (head >= 0) {
+    const x = (head / total) * w;
+    g.globalAlpha = 1;
+    g.fillStyle = resolveColor("var(--ember)");
+    g.fillRect(Math.min(w - 2, x), 0, 2, h);
+  }
+  g.globalAlpha = 1;
+  cv.parentElement.setAttribute("aria-valuemax", String(Math.round(total / 1000)));
+  cv.parentElement.setAttribute("aria-valuenow", String(Math.round(Math.max(0, head) / 1000)));
+}
+
+function bindTimeline() {
+  const tl = $("#tl"), tip = $("#tlTip");
+  if (!tl) return;
+  loadPeaks(S.detail);
+  const msAt = (e) => {
+    const r = tl.getBoundingClientRect();
+    return Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)) * timelineMs(S.detail);
+  };
+  let dragging = false;
+  tl.onpointerdown = (e) => { dragging = true; tl.setPointerCapture(e.pointerId); seekTo(msAt(e)); };
+  tl.onpointermove = (e) => {
+    const ms = msAt(e);
+    if (dragging) seekTo(ms);
+    const who = speakerAt(S.detail, ms);
+    tip.hidden = false;
+    tip.textContent = `${fmtTs(ms)}${who ? ` · ${speakerName(who, S.detail.meeting)}` : ""}`;
+    const r = tl.getBoundingClientRect();
+    tip.style.left = `${Math.min(r.width - tip.offsetWidth, Math.max(0, e.clientX - r.left - tip.offsetWidth / 2))}px`;
+  };
+  tl.onpointerup = tl.onpointercancel = () => (dragging = false);
+  tl.onpointerleave = () => { if (!dragging) tip.hidden = true; };
+  tl.onkeydown = (e) => {
+    const step = e.shiftKey ? 30000 : 5000;
+    if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+      e.preventDefault();
+      const now = player.meeting === S.meetingId ? playerMs() : 0;
+      seekTo(Math.max(0, now + (e.key === "ArrowRight" ? step : -step)));
+    } else if (e.key === " ") { e.preventDefault(); $("#audioToggle")?.click(); }
+  };
+  drawTimeline();
+}
+
+// Jump to a point on the timeline; keeps playing if it was, otherwise just moves the playhead.
+function seekTo(ms) {
+  const wasPlaying = player.meeting === S.meetingId && !player.el.paused;
+  playAt(ms, { autoplay: wasPlaying, lead: 0 });
+  drawTimeline();
+}
+
+window.addEventListener("resize", () => drawTimeline());
 
 // One audio element for the whole app, outside the re-rendered DOM: a re-render used to make a
 // fresh <audio> while the old, detached one kept playing, so two recordings could play at once.
@@ -898,9 +1054,18 @@ player.el.onplay = player.el.onpause = () => {
   const tg = $("#audioToggle");
   if (tg && player.meeting === S.meetingId) { tg.innerHTML = player.el.paused ? ICON.play : ICON.pause; tg.title = player.el.paused ? "Play" : "Pause"; }
 };
-player.el.ontimeupdate = () => {
+player.el.ontimeupdate = player.el.onseeked = () => {
+  if (player.meeting !== S.meetingId) return;
   const el = $("#audioPos");
-  if (el && player.meeting === S.meetingId) el.textContent = `Playing ${fmtTs(player.el.currentTime * 1000)}`;
+  if (el) el.textContent = fmtTs(playerMs());
+  drawTimeline();
+};
+// A meeting resumed later has several recordings: carry on into the next one.
+player.el.onended = () => {
+  const parts = S.detail?.audio || [];
+  if (player.meeting !== S.meetingId) return;
+  const i = parts.findIndex((p) => T.core.convertFileSrc(p.path) === player.el.dataset.src);
+  if (i >= 0 && i + 1 < parts.length) playAt(parts[i + 1].offset_ms, { lead: 0 });
 };
 // play() rejects with AbortError whenever a newer play/pause/seek interrupts it: not an error.
 const playQuietly = () => player.el.play().catch((e) => { if (e?.name !== "AbortError") fail(e); });
@@ -914,7 +1079,7 @@ function stopPlayer() {
 
 // Play the kept recording from a transcript offset (recordings may be split by resumes).
 // Only the latest request wins, however fast the clicks come.
-function playAt(ms) {
+function playAt(ms, { autoplay = true, lead = 500 } = {}) {
   const parts = S.detail?.audio || [];
   if (!parts.length) return;
   let part = parts[0];
@@ -924,8 +1089,9 @@ function playAt(ms) {
   player.meeting = S.meetingId;
   const seek = () => {
     if (token !== player.token) return;
-    a.currentTime = Math.max(0, (ms - part.offset_ms) / 1000 - 0.5);
-    playQuietly();
+    a.currentTime = Math.max(0, (ms - part.offset_ms - lead) / 1000);
+    if (autoplay) playQuietly();
+    else drawTimeline();
   };
   const src = T.core.convertFileSrc(part.path);
   if (a.dataset.src !== src) {
@@ -948,6 +1114,7 @@ function bindAudio() {
     else { player.token++; player.el.pause(); }
   };
   document.querySelectorAll("[data-play]").forEach((b) => (b.onclick = () => playAt(Number(b.dataset.play))));
+  bindTimeline();
   $("#audioDelete").onclick = async () => {
     if (!confirm("Delete this meeting's recording? The transcript and notes stay.")) return;
     stopPlayer();
