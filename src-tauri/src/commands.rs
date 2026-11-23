@@ -576,6 +576,25 @@ pub fn meeting_audio(id: String) -> Value {
         .collect::<Vec<_>>())
 }
 
+/// Loudness outline of each kept recording (for the playback timeline), in `meeting_audio` order.
+#[tauri::command]
+pub async fn meeting_audio_peaks(id: String) -> R<Value> {
+    blocking(move || {
+        let parts = milkrice_core::audio_rec::recordings(&id);
+        Ok(json!(parts
+            .into_iter()
+            .map(|(offset_ms, p)| match milkrice_core::audio_rec::peaks(&p) {
+                Ok(pk) => json!({"offset_ms": offset_ms, "step_ms": pk.step_ms, "mic": pk.mic, "call": pk.call}),
+                Err(e) => {
+                    log::warn!("recording outline: {e:#}");
+                    json!({"offset_ms": offset_ms, "step_ms": 0, "mic": [], "call": []})
+                }
+            })
+            .collect::<Vec<_>>()))
+    })
+    .await
+}
+
 #[tauri::command]
 pub fn delete_meeting_audio(id: String) -> R<()> {
     milkrice_core::audio_rec::delete_recordings(&id).map_err(e)

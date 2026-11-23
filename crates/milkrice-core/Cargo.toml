@@ -30,11 +30,12 @@ ndarray = "0.17"
 rustfft = "6"
 cpal = "0.16"
 rubato = "0.16"
+aec3 = "0.4"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = "11"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSDate", "NSError", "NSURL", "NSRunLoop", "block2"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSArray", "NSDate", "NSError", "NSURL", "NSRunLoop", "NSDictionary", "NSValue", "NSUUID", "block2"] }
 objc2-event-kit = { version = "0.3", features = ["EKEventStore", "EKEvent", "EKCalendarItem", "EKParticipant", "EKCalendar", "EKObject", "EKTypes", "block2"] }
 objc2-app-kit = { version = "0.3", features = ["NSRunningApplication", "NSWorkspace", "NSColor", "NSColorSpace"] }
 objc2-core-audio = "0.3"

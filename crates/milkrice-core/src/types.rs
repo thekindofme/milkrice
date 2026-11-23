@@ -15,7 +15,10 @@ pub enum AudioSource {
 #[derive(Debug, Clone)]
 pub struct AudioFrame {
     pub source: AudioSource,
+    /// 16 kHz mono, for transcription.
     pub samples: Vec<f32>,
+    /// 48 kHz mono for a kept recording (`audio::RECORD_RATE`); empty when none is kept.
+    pub hires: Vec<f32>,
 }
 
 /// One transcribed utterance.

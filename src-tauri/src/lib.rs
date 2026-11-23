@@ -123,6 +123,7 @@ pub fn run() {
             commands::update_segment,
             commands::delete_meeting,
             commands::meeting_audio,
+            commands::meeting_audio_peaks,
             commands::delete_meeting_audio,
             commands::audio_storage,
             commands::rename_speaker,
