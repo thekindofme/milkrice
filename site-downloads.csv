@@ -3,3 +3,7 @@ date,source,medium,campaign,button,page,referrer,country,platform,clicks
 2026-11-21,test,,,deploy-check,/privacy,,AU,mac,1
 2026-11-23,direct,,,nav,,,PL,linux,2
 2026-11-24,direct,,,nav,,,PL,linux,2
+2026-11-25,direct,,,cta,,,GB,windows,1
+2026-11-25,direct,,,faq,,,GB,windows,1
+2026-11-25,direct,,,hero,,,GB,windows,1
+2026-11-25,direct,,,nav,,,GB,windows,1

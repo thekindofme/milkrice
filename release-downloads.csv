@@ -19,3 +19,8 @@ date,tag,asset,kind,downloads
 2026-11-24,v0.1.0,Milkrice_aarch64.app.tar.gz.sig,checksum,1
 2026-11-24,v0.1.0,SHA256SUMS.txt,checksum,2
 2026-11-24,v0.1.0,latest.json,update-check,10
+2026-11-25,v0.1.0,Milkrice_0.1.0_aarch64.dmg,dmg,4
+2026-11-25,v0.1.0,Milkrice_aarch64.app.tar.gz,update-bundle,1
+2026-11-25,v0.1.0,Milkrice_aarch64.app.tar.gz.sig,checksum,1
+2026-11-25,v0.1.0,SHA256SUMS.txt,checksum,2
+2026-11-25,v0.1.0,latest.json,update-check,10
