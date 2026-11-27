@@ -5,10 +5,66 @@
 //! Each field merges on its own, last writer wins by hybrid logical clock (HLC). An HLC is the
 //! string `"<unix ms, 13 digits>-<counter, 4 digits>-<device id>"`, so plain string order is
 //! clock order, and clock skew between devices can't reorder edits made more than a moment apart.
+//!
+//! The counter never needs a fifth digit: when it would pass [`MAX_COUNTER`] the clock moves to the
+//! next millisecond instead, so every HLC this code writes keeps the fixed-width shape and string
+//! order stays clock order. Received HLCs are compared as `(ms, counter, device)` tuples (see
+//! [`hlc_cmp`]), and fields with an HLC that doesn't parse are ignored, so one malformed or hostile
+//! stamp can't freeze a field forever.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
+
+/// Largest counter an HLC carries (four digits). See [`Clock::tick`].
+pub const MAX_COUNTER: u32 = 9999;
+/// Largest millisecond value an HLC may carry (13 digits, the year 2286).
+pub const MAX_MS: u64 = 9_999_999_999_999;
+/// Longest device id an HLC may carry.
+pub const MAX_DEVICE_LEN: usize = 128;
+
+/// A parsed hybrid logical clock stamp.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Hlc<'a> {
+    pub ms: u64,
+    pub counter: u32,
+    pub device: &'a str,
+}
+
+/// Is `id` usable as a device id (in HLCs and file names)? 1–128 of `[A-Za-z0-9._-]`, not `.`/`..`.
+pub fn valid_device_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= MAX_DEVICE_LEN
+        && id != "."
+        && id != ".."
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+}
+
+/// Parse `"<ms>-<counter>-<device>"`. Accepts any digit count for `ms` and `counter` (older
+/// builds could write a five-digit counter) but rejects values out of range and odd device ids.
+pub fn parse_hlc(s: &str) -> Option<Hlc<'_>> {
+    let mut it = s.splitn(3, '-');
+    let (ms, counter, device) = (it.next()?, it.next()?, it.next()?);
+    let digits = |x: &str| !x.is_empty() && x.len() <= 20 && x.bytes().all(|b| b.is_ascii_digit());
+    if !digits(ms) || !digits(counter) || !valid_device_id(device) {
+        return None;
+    }
+    let ms: u64 = ms.parse().ok()?;
+    let counter: u32 = counter.parse().ok()?;
+    (ms <= MAX_MS).then_some(Hlc { ms, counter, device })
+}
+
+/// Clock order of two HLC strings. Unparseable stamps sort before every valid one (and equal
+/// to each other). For well-formed stamps (13 + 4 digits) this is plain string order.
+pub fn hlc_cmp(a: &str, b: &str) -> Ordering {
+    match (parse_hlc(a), parse_hlc(b)) {
+        (Some(x), Some(y)) => x.cmp(&y),
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
+        (None, None) => Ordering::Equal,
+    }
+}
 
 /// The fields that sync. Anything else in a record is ignored by this version.
 pub const FIELDS: &[&str] = &[
@@ -51,9 +107,16 @@ impl Clock {
         Self { device: device.into(), ms: 0, counter: 0 }
     }
 
+    /// A fresh stamp, later than every stamp this clock made or observed.
     pub fn tick(&mut self, wall_ms: u64) -> String {
+        let wall_ms = wall_ms.min(MAX_MS);
         if wall_ms > self.ms {
             self.ms = wall_ms;
+            self.counter = 0;
+        } else if self.counter >= MAX_COUNTER {
+            // Out of counter values for this millisecond: borrow the next one, so the
+            // counter keeps four digits and string order stays clock order.
+            self.ms += 1;
             self.counter = 0;
         } else {
             self.counter += 1;
@@ -62,14 +125,12 @@ impl Clock {
     }
 
     /// Move past a clock seen on another device so our next tick sorts after it.
+    /// Malformed stamps are ignored.
     pub fn observe(&mut self, hlc: &str) {
-        let mut it = hlc.splitn(3, '-');
-        let (Some(ms), Some(c)) = (it.next().and_then(|s| s.parse::<u64>().ok()), it.next().and_then(|s| s.parse::<u32>().ok())) else {
-            return;
-        };
-        if ms > self.ms || (ms == self.ms && c > self.counter) {
-            self.ms = ms;
-            self.counter = c;
+        let Some(h) = parse_hlc(hlc) else { return };
+        if (h.ms, h.counter) > (self.ms, self.counter) {
+            self.ms = h.ms;
+            self.counter = h.counter;
         }
     }
 }
@@ -157,10 +218,10 @@ pub fn merge(
             continue;
         }
         for (name, s) in &r.fields {
-            if !FIELDS.contains(&name.as_str()) {
+            if !FIELDS.contains(&name.as_str()) || parse_hlc(&s.hlc).is_none() {
                 continue;
             }
-            let newer = state.get(name).map(|cur| s.hlc > cur.hlc).unwrap_or(true);
+            let newer = state.get(name).map(|cur| hlc_cmp(&s.hlc, &cur.hlc) == Ordering::Greater).unwrap_or(true);
             if newer {
                 let h = value_hash(&s.v);
                 let changed = values.get(name).map(|lv| value_hash(lv) != h).unwrap_or(true);
@@ -186,5 +247,5 @@ pub fn notes_requested(state: &MeetingState, request: Option<&Value>) -> bool {
     if request.and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
         return false;
     }
-    state.get("enhanced").map(|e| req.hlc > e.hlc).unwrap_or(true)
+    state.get("enhanced").map(|e| hlc_cmp(&req.hlc, &e.hlc) == Ordering::Greater).unwrap_or(true)
 }
