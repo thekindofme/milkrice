@@ -211,7 +211,7 @@ pub fn detect() -> Vec<ProviderInfo> {
         model: ollama_model.clone().unwrap_or_default(),
         detail: match (ollama_ok, ollama_model) {
             (true, Some(m)) => format!("Running locally with {m}"),
-            (true, None) => "Ollama is running but has no models pulled".into(),
+            (true, None) => "Ollama is running but has no local models pulled".into(),
             _ => "Fully offline option: install Ollama and pull a model".into(),
         },
     });
@@ -225,8 +225,23 @@ fn ollama_probe() -> (bool, Option<String>) {
     };
     let Ok(r) = client.get("http://127.0.0.1:11434/api/tags").send() else { return (false, None) };
     let v: serde_json::Value = r.json().unwrap_or_default();
-    let model = v["models"].as_array().and_then(|a| a.first()).and_then(|m| m["name"].as_str()).map(String::from);
-    (true, model)
+    (true, first_local_model(&v))
+}
+
+/// Ollama "cloud" models (e.g. `gpt-oss:120b-cloud`) are listed next to local ones but run on
+/// ollama.com, so the transcript would leave the Mac. Never pick one automatically.
+fn is_cloud_model(m: &serde_json::Value) -> bool {
+    let name = m["name"].as_str().or_else(|| m["model"].as_str()).unwrap_or("");
+    name.ends_with("-cloud") || name.ends_with(":cloud") || m.get("remote_host").is_some_and(|h| !h.is_null())
+}
+
+/// The first model from `/api/tags` that runs on this Mac.
+fn first_local_model(tags: &serde_json::Value) -> Option<String> {
+    tags["models"]
+        .as_array()?
+        .iter()
+        .filter(|m| !is_cloud_model(m))
+        .find_map(|m| m["name"].as_str().map(String::from))
 }
 
 /// One-shot completion. `model` empty = provider default.
@@ -489,6 +504,19 @@ mod tests {
         let segs = vec![seg("s1", "hello", 0), seg("s1", "there", 1000), seg("me", "hi", 2000)];
         let t = transcript_text(&segs, &BTreeMap::new(), 10_000);
         assert_eq!(t, "[00:00] Speaker 1: hello there\n[00:02] Me: hi");
+    }
+
+    #[test]
+    fn ollama_skips_cloud_models() {
+        let tags = serde_json::json!({"models": [
+            {"name": "gpt-oss:120b-cloud", "remote_host": "https://ollama.com:443"},
+            {"name": "kimi:cloud"},
+            {"name": "remote-thing:latest", "remote_host": "https://example.com"},
+            {"name": "llama3.2:3b"},
+        ]});
+        assert_eq!(first_local_model(&tags).as_deref(), Some("llama3.2:3b"));
+        let only_cloud = serde_json::json!({"models": [{"name": "gpt-oss:20b-cloud"}]});
+        assert_eq!(first_local_model(&only_cloud), None);
     }
 
     #[test]
