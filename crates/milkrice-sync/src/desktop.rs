@@ -383,7 +383,7 @@ pub fn sync_pass(cfg: &Config, vault: &Vault, store: &Store) -> Result<PassRepor
             apply(store, &id, &out.apply, &view)?;
             report.imported.push(id.clone());
         }
-        let request = remotes.iter().filter_map(|r| r.fields.get("notes_request")).max_by(|a, b| a.hlc.cmp(&b.hlc)).map(|s| s.v.clone());
+        let request = remotes.iter().filter_map(|r| r.fields.get("notes_request")).max_by(|a, b| merge::hlc_cmp(&a.hlc, &b.hlc)).map(|s| s.v.clone());
         if merge::notes_requested(&state, request.as_ref()) && store.get_meeting(&id)?.is_some() {
             report.requests.push(id.clone());
         }
