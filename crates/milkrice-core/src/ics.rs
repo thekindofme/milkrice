@@ -16,6 +16,7 @@ pub fn fetch(url: &str) -> Result<String> {
     }
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(20))
+        .https_only(true)
         .user_agent("Milkrice/0.1 (local meeting notes)")
         .build()?;
     // A feed address is a secret (e.g. Google's private iCal link). reqwest errors include the
