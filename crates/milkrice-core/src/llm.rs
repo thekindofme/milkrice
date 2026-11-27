@@ -472,10 +472,13 @@ pub fn parse_speaker_map(text: &str) -> BTreeMap<String, String> {
     let start = text.find('{');
     let end = text.rfind('}');
     let (Some(a), Some(b)) = (start, end) else { return BTreeMap::new() };
-    serde_json::from_str::<BTreeMap<String, String>>(&text[a..=b])
+    // Values other than strings (models often answer null for "not sure") are skipped, not
+    // allowed to throw away the whole answer.
+    serde_json::from_str::<BTreeMap<String, serde_json::Value>>(&text[a..=b])
         .unwrap_or_default()
         .into_iter()
-        .filter(|(k, v)| k != "me" && !v.trim().is_empty() && v.len() < 80)
+        .filter_map(|(k, v)| Some((k, v.as_str()?.trim().to_string())))
+        .filter(|(k, v)| k != "me" && !v.is_empty() && v.chars().count() < 80)
         .collect()
 }
 

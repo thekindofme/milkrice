@@ -123,11 +123,13 @@ pub fn render_block(m: &Meeting, segs: &[Segment], opts: &ExportOptions) -> Stri
         for s in segs.iter().filter(|s| !s.text.trim().is_empty()) {
             let name = speaker_name(&s.speaker, &m.speakers);
             let sec = s.start_ms / 1000;
+            // An edited line can hold line breaks: keep every line inside the callout.
+            let text = s.text.trim().replace("\r\n", "\n").replace('\n', "\n> ");
             if last == Some(s.speaker.as_str()) {
-                let _ = writeln!(o, "> {}", s.text.trim());
+                let _ = writeln!(o, "> {text}");
             } else {
                 let who = if s.speaker == "me" || name.starts_with("Speaker ") { name.clone() } else { link(&name, opts.link_people) };
-                let _ = writeln!(o, ">\n> **{:02}:{:02} {who}:** {}", sec / 60, sec % 60, s.text.trim());
+                let _ = writeln!(o, ">\n> **{:02}:{:02} {who}:** {text}", sec / 60, sec % 60);
                 last = Some(&s.speaker);
             }
         }
@@ -169,6 +171,14 @@ pub fn render_front_matter(m: &Meeting, opts: &ExportOptions) -> String {
 pub fn merge(existing: &str, front: &str, block: &str) -> String {
     // Keep any user front-matter keys we don't manage? Simpler and predictable: Milkrice owns the
     // front matter; the user's notes live outside the block.
+    // Notes that came back from another device or tool may use CRLF line endings.
+    let normalized;
+    let existing = if existing.contains("\r\n") {
+        normalized = existing.replace("\r\n", "\n");
+        normalized.as_str()
+    } else {
+        existing
+    };
     let body = existing
         .strip_prefix("---\n")
         .and_then(|rest| rest.find("\n---\n").map(|i| &rest[i + 5..]))

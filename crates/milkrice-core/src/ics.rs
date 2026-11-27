@@ -76,8 +76,27 @@ fn props(text: &str) -> Vec<Prop> {
         .collect()
 }
 
+/// TEXT value unescaping (RFC 5545 3.3.11), one escape at a time so that an escaped backslash
+/// followed by "n" stays a backslash and an "n".
 fn unescape(s: &str) -> String {
-    s.replace("\\n", "\n").replace("\\N", "\n").replace("\\,", ",").replace("\\;", ";").replace("\\\\", "\\")
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match it.next() {
+            Some('n' | 'N') => out.push('\n'),
+            Some(e @ (',' | ';' | '\\')) => out.push(e),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 /// Parse DTSTART/DTEND-style values into UTC. Returns (instant, all_day).
@@ -97,7 +116,13 @@ fn parse_dt(p: &Prop) -> Option<(DateTime<Utc>, bool)> {
         .get("TZID")
         .and_then(|t| t.parse().ok())
         .unwrap_or(chrono_tz::Tz::UTC);
-    let local = tz.from_local_datetime(&n).earliest()?;
+    // In a fall-back overlap the first of the two times is meant (RFC 5545 3.3.5). A time in a
+    // spring-forward gap doesn't exist; calendar apps move it forward by the gap, so do the same
+    // rather than dropping the event.
+    let local = tz
+        .from_local_datetime(&n)
+        .earliest()
+        .or_else(|| tz.from_local_datetime(&(n + chrono::Duration::hours(1))).earliest())?;
     Some((local.with_timezone(&Utc), false))
 }
 
@@ -205,12 +230,48 @@ fn prop_line(p: &Prop) -> String {
     format!("{s}:{}", p.value)
 }
 
+/// RRULE's UNTIL must have the same value type as DTSTART (and be UTC when DTSTART has a
+/// time zone). Feeds sometimes break that, and the rrule crate then rejects the whole rule,
+/// leaving only the first meeting. Rewrite UNTIL to match: a date means "through that day" in
+/// the event's time zone; a date-time on an all-day event keeps just its date.
+fn until_matching_start(rule: &str, start: &Prop) -> String {
+    let timed_start = start.value.contains('T');
+    rule.split(';')
+        .map(|part| {
+            let Some(until) = part.strip_prefix("UNTIL=").or_else(|| part.strip_prefix("until=")) else {
+                return part.to_string();
+            };
+            let date_only = until.len() == 8 && until.chars().all(|c| c.is_ascii_digit());
+            if timed_start && date_only {
+                let Some(day) = NaiveDate::parse_from_str(until, "%Y%m%d").ok().and_then(|d| d.and_hms_opt(23, 59, 59)) else {
+                    return part.to_string();
+                };
+                let utc = if start.value.ends_with('Z') {
+                    Some(Utc.from_utc_datetime(&day))
+                } else {
+                    let tz: chrono_tz::Tz = start.params.get("TZID").and_then(|t| t.parse().ok()).unwrap_or(chrono_tz::Tz::UTC);
+                    tz.from_local_datetime(&day).earliest().map(|d| d.with_timezone(&Utc))
+                };
+                match utc {
+                    Some(u) => format!("UNTIL={}", u.format("%Y%m%dT%H%M%SZ")),
+                    None => part.to_string(),
+                }
+            } else if !timed_start && !date_only && until.len() >= 8 {
+                format!("UNTIL={}", &until[..8])
+            } else {
+                part.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
 fn occurrences(e: &VEvent, from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<DateTime<Utc>> {
     let Some((start, _)) = e.start else { return vec![] };
     let (Some(rule), Some(sp)) = (&e.rrule, &e.start_raw) else {
         return vec![start];
     };
-    let mut spec = format!("{}\nRRULE:{}", prop_line(sp), rule);
+    let mut spec = format!("{}\nRRULE:{}", prop_line(sp), until_matching_start(rule, sp));
     for ex in &e.exdates {
         spec.push('\n');
         spec.push_str(&prop_line(ex));
@@ -240,10 +301,15 @@ pub fn parse(text: &str, calendar_name: &str, owner_email: Option<&str>, from: D
         .iter()
         .filter_map(|e| e.recurrence_id.map(|r| ((e.uid.clone(), r.timestamp()), e)))
         .collect();
+    // Series whose main event (the one without RECURRENCE-ID) is in the feed.
+    let parents: std::collections::HashSet<&str> =
+        events.iter().filter(|e| e.recurrence_id.is_none()).map(|e| e.uid.as_str()).collect();
     let mut out = Vec::new();
     for e in &events {
-        if e.recurrence_id.is_some() {
-            continue; // handled when expanding its parent
+        // Handled when expanding its parent. Without one (invited to a single occurrence of
+        // someone else's series) the occurrence stands on its own.
+        if e.recurrence_id.is_some() && parents.contains(e.uid.as_str()) {
+            continue;
         }
         let Some((start, all_day)) = e.start else { continue };
         let dur = e.end.map(|(end, _)| end - start).unwrap_or_else(|| chrono::Duration::minutes(if all_day { 1440 } else { 30 }));

@@ -333,15 +333,17 @@ impl Store {
         let sql = if q.is_some() {
             "SELECT m.id,m.title,m.created_at,m.duration_ms,m.status,m.attendees,
                COALESCE(NULLIF(substr(m.enhanced,1,240),''), substr(m.notes,1,240)) FROM meetings m
-             WHERE m.title LIKE ?1 OR m.notes LIKE ?1 OR m.enhanced LIKE ?1 OR m.attendees LIKE ?1
-               OR EXISTS (SELECT 1 FROM segments s WHERE s.meeting_id=m.id AND s.text LIKE ?1)
+             WHERE m.title LIKE ?1 ESCAPE '\\' OR m.notes LIKE ?1 ESCAPE '\\' OR m.enhanced LIKE ?1 ESCAPE '\\'
+               OR m.attendees LIKE ?1 ESCAPE '\\'
+               OR EXISTS (SELECT 1 FROM segments s WHERE s.meeting_id=m.id AND s.text LIKE ?1 ESCAPE '\\')
              ORDER BY m.created_at DESC LIMIT ?2"
         } else {
             "SELECT m.id,m.title,m.created_at,m.duration_ms,m.status,m.attendees,
                COALESCE(NULLIF(substr(m.enhanced,1,240),''), substr(m.notes,1,240)) FROM meetings m
              WHERE ?1 IS NULL OR ?1 IS NOT NULL ORDER BY m.created_at DESC LIMIT ?2"
         };
-        let like = q.map(|s| format!("%{}%", s.replace('%', "\\%")));
+        // Search text is literal: escape LIKE's wildcards (and the escape character itself).
+        let like = q.map(|s| format!("%{}%", s.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_")));
         let mut st = c.prepare(sql)?;
         let rows = st.query_map(params![like, limit as i64], |r| {
             Ok(MeetingSummary {
