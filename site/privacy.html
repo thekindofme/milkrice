@@ -41,7 +41,7 @@
     </aside>
     <article class="doc-body">
       <h1>Privacy</h1>
-      <p class="updated">Last updated 22 November 2026</p>
+      <p class="updated">Last updated 27 November 2026</p>
       <div class="note"><p><strong>The short version.</strong> We don't collect anything about you. The Milkrice apps have no account, no telemetry, no analytics and no server of ours. Your notes, transcripts and audio stay on your Mac and iPhone. Text leaves your Mac only when Milkrice asks the AI provider you chose to write something, and that goes to the provider under your own account. This website counts visits and downloads anonymously, without cookies.</p></div>
 
       <h2>What we collect</h2>
@@ -61,6 +61,7 @@
       <ul>
         <li><span class="path">milkrice.sqlite</span>: your notes, AI-written summaries, transcripts, speaker names, chat history about meetings, and your settings (including any calendar feed addresses you add).</li>
         <li><span class="path">models/</span>: the speech and speaker models you downloaded.</li>
+        <li><span class="path">milkrice.log</span>: a diagnostic log of events and errors. Once it passes 5 MB, the next launch starts a new one and keeps one older copy. It is written to leave out transcript text, notes and calendar addresses.</li>
         <li><span class="path">audio/</span>: recordings, only if you turn recordings on (they're off by default). Each is a compressed .m4a with your microphone on one channel and the call audio on the other, about 15 MB an hour. Milkrice deletes recordings older than your retention setting (30 days by default; 0 keeps them until you delete them), and deleting a meeting deletes its recordings.</li>
       </ul>
       <p>When recordings are off, audio is processed in memory and discarded once it has been transcribed. While a recording is being made, uncompressed audio is written to the same folder and converted when the meeting ends. Requests to an AI provider run in a temporary folder (<span class="path">milkrice-llm</span> in the system temporary directory); the output file used for Codex is deleted after it's read.</p>
@@ -76,16 +77,16 @@
 
       <h2>When information leaves your Mac</h2>
       <h3>The AI provider you choose</h3>
-      <p>Milkrice writes notes, titles meetings, matches speakers to names and answers questions using an AI provider you pick. Unless you turn it off, this happens automatically after each meeting. For each request Milkrice sends the meeting's title, date, invited names, your notes and the transcript text (shortened in the middle for very long meetings). It never sends audio.</p>
+      <p>Milkrice writes notes, titles meetings, matches speakers to names and answers questions using an AI provider you pick. Unless you turn it off, this happens automatically after each meeting. For each request Milkrice sends the meeting's title, date, invited names, your name if you set one, your notes and the transcript text (shortened in the middle for very long meetings). When it suggests a folder for a new note, it also sends your folder names, the titles of a few notes already in each folder, and the invited people's email addresses. It never sends audio.</p>
       <ul>
         <li><strong>Claude Code</strong>: Milkrice runs the <code>claude</code> command you installed, using the Haiku model by default, with tools turned off and session saving disabled. The request goes to Anthropic under your Claude account.</li>
         <li><strong>Codex</strong>: Milkrice runs the <code>codex</code> command you installed, in a read-only sandbox with an ephemeral session. The request goes to OpenAI under your ChatGPT or OpenAI account.</li>
-        <li><strong>Ollama</strong>: Milkrice talks to Ollama at <span class="path">127.0.0.1:11434</span> on your own Mac. Nothing leaves your computer.</li>
+        <li><strong>Ollama</strong>: Milkrice talks to Ollama at <span class="path">127.0.0.1:11434</span> on your own Mac and picks a model that runs there. Nothing leaves your computer. Ollama's "cloud" models run on ollama.com instead, so Milkrice skips them unless you name one yourself.</li>
       </ul>
       <p>Anthropic's and OpenAI's privacy policies and terms, and the data settings of your plan, apply to what you send them. Milkrice never sees or stores your sign-in details or API keys; it uses the tools you have already signed into.</p>
 
       <h3>Model downloads</h3>
-      <p>When you download a speech model, Milkrice fetches it from <span class="path">huggingface.co</span> (or <span class="path">download.moonshine.ai</span> for the Moonshine streaming model). Each file is checked against a pinned checksum before use. The speaker recognition model comes from the sherpa-onnx releases on GitHub. Like any download, those hosts see your IP address and which file you asked for. Milkrice sends nothing else.</p>
+      <p>When you download a speech model, Milkrice fetches it over HTTPS from <span class="path">huggingface.co</span>, which may redirect to its download servers. Each file is pinned to a fixed version and checked against a pinned checksum before use. The speaker recognition model comes from the sherpa-onnx releases on GitHub and is checked the same way. Like any download, those hosts see your IP address and which file you asked for. Milkrice sends nothing else.</p>
 
       <h3>Update checks</h3>
       <p>Shortly after launch, and when you choose "Check for updates" in the menu bar, Milkrice asks <span class="path">github.com</span> for the latest release information. GitHub sees your IP address and the request; Milkrice sends no identifiers. Updates are only installed if you agree, and are verified against a signature before they run.</p>
@@ -94,7 +95,7 @@
       <p>Milkrice normally reads the calendars already synced to macOS. If you also paste an iCal address (for example Google Calendar's secret address), Milkrice fetches that address over HTTPS from time to time. The address is stored only in your local settings.</p>
 
       <h3>Your agents</h3>
-      <p>If you connect Milkrice to Claude Code or Codex from Settings, those agents can read your meetings through the <code>milkrice</code> command or MCP server, on your Mac and read-only. Anything an agent reads becomes part of that agent's session, which is handled by its provider under your account.</p>
+      <p>If you connect Milkrice to Claude Code, Codex, Cursor, OpenCode, VS Code or another agent, that agent can read your meetings through the <code>milkrice</code> command or MCP server, on your Mac and read-only. Anything an agent reads becomes part of that agent's session, which is handled by its provider under your account. A transcript holds whatever anyone on a call said, so Milkrice tells agents to treat meeting content as information, never as instructions.</p>
 
       <h2>The iPhone app (beta)</h2>
       <p>The iPhone app works the same way: no account, no telemetry, nothing sent to us.</p>
