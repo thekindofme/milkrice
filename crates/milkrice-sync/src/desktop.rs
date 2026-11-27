@@ -117,7 +117,7 @@ fn delete_key(vault_id: &str) {
 }
 
 pub fn open_vault(cfg: &Config) -> Result<Vault> {
-    Vault::open(&cfg.folder, load_key(&cfg.vault_id)?)
+    Vault::open_expecting(&cfg.folder, load_key(&cfg.vault_id)?, &cfg.vault_id)
 }
 
 /// iCloud Drive › Milkrice Sync.
