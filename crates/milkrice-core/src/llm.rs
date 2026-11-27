@@ -498,3 +498,78 @@ mod tests {
         assert_eq!(m["s1"], "Priya");
     }
 }
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    fn seg(sp: &str, ms: u64, t: &str) -> Segment {
+        Segment { id: 0, start_ms: ms, end_ms: ms + 500, source: AudioSource::System, speaker: sp.into(), text: t.into() }
+    }
+
+    #[test]
+    fn empty_transcript_and_blank_segments() {
+        assert_eq!(transcript_text(&[], &BTreeMap::new(), 1000), "");
+        assert_eq!(transcript_text(&[seg("s1", 0, "   "), seg("s2", 10, "")], &BTreeMap::new(), 1000), "");
+        // A blank line between two lines of the same speaker doesn't split the run.
+        let t = transcript_text(&[seg("s1", 0, "a"), seg("s2", 1, " "), seg("s1", 2, "b")], &BTreeMap::new(), 1000);
+        assert_eq!(t, "[00:00] Speaker 1: a b");
+    }
+
+    #[test]
+    fn long_meeting_timestamps_count_minutes_past_the_hour() {
+        let t = transcript_text(&[seg("me", 3 * 3_600_000 + 61_000, "late")], &BTreeMap::new(), 1000);
+        assert_eq!(t, "[181:01] Me: late");
+    }
+
+    #[test]
+    fn truncation_keeps_head_and_tail_and_respects_utf8() {
+        // ~3 hours of CJK and emoji lines: cutting must never split a character.
+        let segs: Vec<Segment> = (0..4000u64).map(|i| seg(if i % 2 == 0 { "me" } else { "s1" }, i * 2700, &format!("{i}: 予算について話しましょう 🚀"))).collect();
+        let max = 5_000;
+        let t = transcript_text(&segs, &BTreeMap::new(), max);
+        assert!(t.contains("middle of transcript omitted"));
+        assert!(t.starts_with("[00:00] Me: 0:"));
+        assert!(t.ends_with("3999: 予算について話しましょう 🚀"));
+        assert!(t.len() <= max + 64, "{} bytes", t.len());
+        // Budget for many meetings: ask_all splits it and never panics on an empty list.
+        let (_, p) = ask_all_prompt(&[], "anything?");
+        assert!(p.contains("Question: anything?"));
+    }
+
+    #[test]
+    fn speaker_names_use_saved_names_and_fallbacks() {
+        let mut names = BTreeMap::new();
+        names.insert("s2".to_string(), "Zoë Çelik".to_string());
+        names.insert("s3".to_string(), "  ".to_string());
+        assert_eq!(speaker_name("s2", &names), "Zoë Çelik");
+        assert_eq!(speaker_name("s3", &names), "Speaker 3", "blank saved name falls back");
+        assert_eq!(speaker_name("me", &names), "Me");
+        assert_eq!(speaker_name("them", &names), "Them");
+        assert_eq!(speaker_name("guest", &names), "guest");
+    }
+
+    #[test]
+    fn speaker_map_tolerates_nulls_and_non_string_values() {
+        // Models often answer with null for "not sure" instead of leaving the label out.
+        let m = parse_speaker_map("```json\n{\"s1\": \"Priya Shah\", \"s2\": null, \"s3\": 3}\n```");
+        assert_eq!(m.len(), 1, "{m:?}");
+        assert_eq!(m["s1"], "Priya Shah");
+        // Names are limited by characters, so non-Latin names aren't dropped for byte length.
+        let long_cjk = "李".repeat(30);
+        let m = parse_speaker_map(&format!("{{\"s1\": \"{long_cjk}\"}}"));
+        assert_eq!(m.get("s1"), Some(&long_cjk));
+        assert!(parse_speaker_map("no json here").is_empty());
+        assert!(parse_speaker_map("{}").is_empty());
+    }
+
+    #[test]
+    fn speaker_prompt_needs_other_side_speech() {
+        let m = Meeting { title: "1:1".into(), created_at: chrono::Utc::now(), ..Default::default() };
+        let mine = Segment { source: AudioSource::Mic, ..seg("me", 0, "just me") };
+        assert!(speaker_names_prompt(&m, &[mine]).is_none());
+        assert!(speaker_names_prompt(&m, &[]).is_none());
+        let (_, p) = speaker_names_prompt(&m, &[seg("s1", 0, "hi"), seg("s2", 1000, "hello")]).unwrap();
+        assert!(p.contains("Labels to identify: s1, s2"));
+    }
+}
