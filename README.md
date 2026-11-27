@@ -5,7 +5,7 @@ Local-first AI meeting notes for macOS, written in Rust. An open-source alternat
 - **Listens on your Mac.** It captures your mic ("Me") and system audio (everyone else on the call), then transcribes live with an **open-weights model you download once**. The model choice follows Handy: Parakeet v2/v3, Canary, Cohere Transcribe, Whisper, Moonshine and SenseVoice. Audio is never uploaded, and it's only kept on disk if you turn on **Keep recordings**.
 - **Knows who's talking.** A local speaker-embedding model (WeSpeaker ResNet34) separates the remote voices. Names come from the calendar invite and from cues in the conversation ("thanks, Priya"), and you can rename or merge speakers with a click.
 - **Hooks into your calendar.** It reads the calendars already synced to macOS (iCloud, Google, Exchange) through EventKit. You get a notification (and a "Next: … · Start notes" item in the menu bar) as a meeting starts, or it can record automatically. While auto-record is on, Milkrice shows it in the sidebar and menu bar, with a one-click "Turn off". It stops when the meeting is over and the room goes quiet. It also notices unscheduled Zoom, Teams, Webex, Slack and FaceTime calls that are using the mic.
-- **Writes your notes with the AI you already pay for.** It uses **Claude Haiku** through the Claude Code CLI or **Codex Luna** through the Codex CLI, reusing their existing subscription logins. A fully offline Ollama option is also available. No API keys are needed. You choose the provider once during setup and Milkrice remembers it. Until you do, nothing is sent anywhere and notes aren't written.
+- **Writes your notes with the AI you already pay for.** It uses **Claude Haiku** through the Claude Code CLI or **Codex Luna** through the Codex CLI, reusing their existing subscription logins. A fully offline Ollama option is also available. No API keys are needed. You choose the provider once during setup and Milkrice remembers it. Until you do, nothing is sent to any AI and notes aren't written.
 - **Granola-style workflow:**
   - Jot rough notes during the call. Afterwards Milkrice expands them with detail from the transcript, using templates for 1:1s, stand-ups, customer calls, interviews and more.
   - The AI notes are yours to edit: action items tick off, and the note says which model wrote it. Speaker names the AI guessed are marked until you confirm them.
@@ -154,7 +154,8 @@ Injects a calendar meeting. The real scheduler auto-starts recording, auto-stops
   - Model downloads.
   - Your calendar feed, if you add a secret iCal address.
   - A check for new Milkrice releases on GitHub (the app asks before installing anything).
-  - When notes are written, the transcript text and your notes go to the AI you chose (Claude Code or Codex, using your own subscription). Choose Ollama to keep even that on-device.
+  - When notes are written (automatically after each meeting unless you turn that off), the transcript text, your notes, the title and attendee names go to the AI you chose (Claude Code or Codex, using your own subscription). To suggest a folder it also sends your folder names, a few note titles and attendee emails. Choose Ollama with a local model to keep even that on-device.
+  - With iPhone sync on, encrypted files go to your iCloud Drive (see below).
 - **Obsidian:** export writes plain Markdown files into the folder you pick.
 - **iPhone sync (optional, off by default):** once you pair an iPhone, meetings sync through a folder in your iCloud Drive (or any folder you choose). Every file is end-to-end encrypted with a key that stays in each device's keychain, so Apple, or whoever hosts the folder, sees only sealed files with random names.
 
