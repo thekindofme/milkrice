@@ -278,9 +278,11 @@ pub fn complete(provider: Provider, model: &str, system: &str, prompt: &str) -> 
                 .arg(&out_file)
                 .arg("-");
             let full = format!("{system}\n\n---\n\n{prompt}\n\nRespond with only the requested output. Do not run commands or read files.");
-            run(c, &full, timeout)?;
+            let res = run(c, &full, timeout);
             let text = std::fs::read_to_string(&out_file).unwrap_or_default();
+            // Remove it on failure or timeout too: it can hold part of the notes.
             let _ = std::fs::remove_file(&out_file);
+            res?;
             text
         }
         Provider::Ollama => {
