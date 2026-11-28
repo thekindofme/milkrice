@@ -505,7 +505,9 @@ mod edge_tests {
         let evs = parse(&f, "Personal", None, utc(2027, 2, 1, 0, 0), utc(2027, 3, 1, 0, 0));
         assert_eq!(evs.len(), 1, "{evs:#?}");
         assert!(evs[0].all_day);
-        assert_eq!(evs[0].start, utc(2027, 2, 14, 0, 0));
+        // Recurring all-day occurrences are expanded at local midnight, so check the calendar
+        // date the user sees rather than a fixed UTC instant (this test runs in any time zone).
+        assert_eq!(evs[0].start.with_timezone(&chrono::Local).date_naive(), NaiveDate::from_ymd_opt(2027, 2, 14).unwrap());
     }
 
     #[test]

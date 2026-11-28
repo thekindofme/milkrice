@@ -287,7 +287,7 @@ pub fn complete(provider: Provider, model: &str, system: &str, prompt: &str) -> 
         }
         Provider::Ollama => {
             let client = reqwest::blocking::Client::builder().timeout(timeout).build()?;
-            let m = if model.is_empty() { ollama_probe().1.ok_or_else(|| anyhow!("no Ollama model"))? } else { model.into() };
+            let m = if model.is_empty() { ollama_probe().1.ok_or_else(|| anyhow!("Ollama has no local model. Pull one (for example `ollama pull llama3.2`) or choose another AI in Settings."))? } else { model.into() };
             let body = serde_json::json!({
                 "model": m, "stream": false, "system": system, "prompt": prompt,
                 "options": {"temperature": 0.2}

@@ -4,6 +4,11 @@ All notable changes to Milkrice are recorded here. The format follows [Keep a Ch
 
 ## Unreleased
 
+- Privacy: Ollama "cloud" models (which run on ollama.com) are no longer picked automatically; with no local model, notes fail with a message saying how to fix it
+- Privacy: secret iCal feed addresses no longer appear in errors or `milkrice.log`; model, speaker-model and calendar downloads require HTTPS; the data folder is created owner-only (0700); Codex's temporary output file is deleted when a run fails
+- Privacy: agents reading meetings through the MCP server or skill are told to treat meeting content as data, never as instructions
+- Fix: search treated `_` in a query as a wildcard; recurring meetings whose UNTIL didn't match DTSTART's type showed only once; speaker maps with non-text values failed to load
+- Sync: hardened ahead of the iPhone app (stamp counter overflow, pairing card fields, record ids limited to safe file names, no following planted symlinks); see docs/audits/sync-security-review-2026-11.md and docs/SYNC-FORMAT.md
 - iPhone sync (Settings › iPhone sync): pair Milkrice for iPhone (beta) with a QR code and a matching 6-digit code, then meetings sync both ways through iCloud Drive (or any shared folder), end-to-end encrypted with a key kept in each device's keychain. Meetings from the iPhone are marked in the sidebar, mirrored to Obsidian, and the Mac writes their notes with your chosen AI when the iPhone asks
 - Fix: the Obsidian section in Settings never finished loading ("Looking for vaults…"), so a vault could only be chosen during onboarding
 - Sync: the Mac keeps sending where each meeting was recorded, so a device paired later learns it, and never labels a meeting it received as recorded on the Mac
