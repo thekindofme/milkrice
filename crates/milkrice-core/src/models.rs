@@ -45,61 +45,6 @@ pub fn statuses() -> Vec<ModelStatus> {
         .collect()
 }
 
-/// Download `url` to `dest` (atomically, via a .part file). `progress(done, total)` is
-/// called at most ~10x per second. Returns Err if `cancel` gets set.
-pub fn download_file(
-    url: &str,
-    dest: &Path,
-    cancel: &AtomicBool,
-    mut progress: impl FnMut(u64, u64),
-) -> Result<()> {
-    let client = reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(20))
-        .timeout(None)
-        .user_agent("Milkrice/0.1 (local meeting notes)")
-        .build()?;
-    let mut resp = client.get(url).send().context("connecting")?;
-    if !resp.status().is_success() {
-        bail!("download failed: HTTP {}", resp.status());
-    }
-    let total = resp.content_length().unwrap_or(0);
-    let part = dest.with_extension("part");
-    if let Some(parent) = dest.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut out = std::io::BufWriter::with_capacity(1 << 20, fs::File::create(&part)?);
-    let mut buf = vec![0u8; 256 * 1024];
-    let mut done = 0u64;
-    let mut last = Instant::now();
-    progress(0, total);
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            drop(out);
-            let _ = fs::remove_file(&part);
-            bail!("cancelled");
-        }
-        let n = resp.read(&mut buf).context("reading download")?;
-        if n == 0 {
-            break;
-        }
-        out.write_all(&buf[..n])?;
-        done += n as u64;
-        if last.elapsed() > Duration::from_millis(100) {
-            progress(done, total);
-            last = Instant::now();
-        }
-    }
-    out.flush()?;
-    drop(out);
-    if total > 0 && done != total {
-        let _ = fs::remove_file(&part);
-        bail!("download incomplete ({done} of {total} bytes)");
-    }
-    progress(done, total);
-    fs::rename(&part, dest)?;
-    Ok(())
-}
-
 /// Download one pinned file, hashing as it streams; the file is only kept if size and SHA-256
 /// match. `progress(done)` reports bytes of this file.
 fn download_verified(f: &crate::catalog::ModelFile, dest: &Path, cancel: &AtomicBool, mut progress: impl FnMut(u64)) -> Result<()> {
@@ -107,6 +52,8 @@ fn download_verified(f: &crate::catalog::ModelFile, dest: &Path, cancel: &Atomic
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(20))
         .timeout(None)
+        // Model hosts redirect to CDNs; refuse any hop that isn't HTTPS.
+        .https_only(true)
         .user_agent("Milkrice/0.1 (local meeting notes)")
         .build()?;
     let mut resp = client.get(f.url).send().with_context(|| format!("connecting for {}", f.name))?;

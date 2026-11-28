@@ -63,11 +63,30 @@ pub fn data_dir() -> PathBuf {
                 m
             });
             let _ = outcome;
-            base.join("Milkrice")
+            let dir = base.join("Milkrice");
+            let _ = std::fs::create_dir_all(&dir);
+            restrict_to_owner(&dir);
+            return dir;
         }
     };
     let _ = std::fs::create_dir_all(&dir);
     dir
+}
+
+/// The data folder holds transcripts, notes, recordings and the log: only its owner may open
+/// it, whatever the umask or the permissions of the folders above it.
+fn restrict_to_owner(dir: &Path) {
+    static DONE: OnceLock<()> = OnceLock::new();
+    DONE.get_or_init(|| owner_only(dir));
+}
+
+fn owner_only(dir: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(m) = std::fs::metadata(dir) {
+        if m.permissions().mode() & 0o077 != 0 {
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+    }
 }
 
 pub fn models_dir() -> PathBuf {
@@ -126,6 +145,18 @@ mod tests {
         std::fs::create_dir_all(base.join("Milkrice")).unwrap();
         assert_eq!(migrate_legacy_data(&base), Migration::NotNeeded);
         assert!(base.join("Margin/margin.sqlite").exists());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn data_folder_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = tmp();
+        let dir = base.join("Milkrice");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        owner_only(&dir);
+        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
         let _ = std::fs::remove_dir_all(&base);
     }
 

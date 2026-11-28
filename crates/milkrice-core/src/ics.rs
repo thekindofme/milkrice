@@ -16,13 +16,16 @@ pub fn fetch(url: &str) -> Result<String> {
     }
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(20))
+        .https_only(true)
         .user_agent("Milkrice/0.1 (local meeting notes)")
         .build()?;
-    let resp = client.get(&url).send().context("fetching calendar")?;
+    // A feed address is a secret (e.g. Google's private iCal link). reqwest errors include the
+    // URL, and these errors end up in milkrice.log and the UI, so strip it from every one.
+    let resp = client.get(&url).send().map_err(|e| e.without_url()).context("fetching calendar")?;
     if !resp.status().is_success() {
         bail!("calendar fetch failed: HTTP {}", resp.status());
     }
-    let body = resp.text()?;
+    let body = resp.text().map_err(|e| e.without_url()).context("reading calendar")?;
     if !body.contains("BEGIN:VCALENDAR") {
         bail!("that address didn't return an iCal calendar");
     }
