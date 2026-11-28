@@ -123,11 +123,13 @@ pub fn render_block(m: &Meeting, segs: &[Segment], opts: &ExportOptions) -> Stri
         for s in segs.iter().filter(|s| !s.text.trim().is_empty()) {
             let name = speaker_name(&s.speaker, &m.speakers);
             let sec = s.start_ms / 1000;
+            // An edited line can hold line breaks: keep every line inside the callout.
+            let text = s.text.trim().replace("\r\n", "\n").replace('\n', "\n> ");
             if last == Some(s.speaker.as_str()) {
-                let _ = writeln!(o, "> {}", s.text.trim());
+                let _ = writeln!(o, "> {text}");
             } else {
                 let who = if s.speaker == "me" || name.starts_with("Speaker ") { name.clone() } else { link(&name, opts.link_people) };
-                let _ = writeln!(o, ">\n> **{:02}:{:02} {who}:** {}", sec / 60, sec % 60, s.text.trim());
+                let _ = writeln!(o, ">\n> **{:02}:{:02} {who}:** {text}", sec / 60, sec % 60);
                 last = Some(&s.speaker);
             }
         }
@@ -169,6 +171,14 @@ pub fn render_front_matter(m: &Meeting, opts: &ExportOptions) -> String {
 pub fn merge(existing: &str, front: &str, block: &str) -> String {
     // Keep any user front-matter keys we don't manage? Simpler and predictable: Milkrice owns the
     // front matter; the user's notes live outside the block.
+    // Notes that came back from another device or tool may use CRLF line endings.
+    let normalized;
+    let existing = if existing.contains("\r\n") {
+        normalized = existing.replace("\r\n", "\n");
+        normalized.as_str()
+    } else {
+        existing
+    };
     let body = existing
         .strip_prefix("---\n")
         .and_then(|rest| rest.find("\n---\n").map(|i| &rest[i + 5..]))
@@ -270,5 +280,91 @@ mod tests {
         assert!(!p2.exists() && p3.exists());
         assert!(std::fs::read_to_string(&p3).unwrap().contains("call Priya"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+    use crate::types::{AudioSource, Attendee};
+
+    fn seg(speaker: &str, start_ms: u64, text: &str) -> Segment {
+        Segment { id: 0, start_ms, end_ms: start_ms + 1000, source: AudioSource::System, speaker: speaker.into(), text: text.into() }
+    }
+
+    #[test]
+    fn unicode_and_unsafe_titles_make_valid_file_names() {
+        let opts = ExportOptions { root: "/vault".into(), ..Default::default() };
+        let name = |title: &str| {
+            let m = Meeting { title: title.into(), created_at: chrono::Utc::now(), ..Default::default() };
+            note_path(&opts, &m).file_name().unwrap().to_string_lossy().split_once(' ').unwrap().1.to_string()
+        };
+        assert_eq!(name("週次定例 🚀"), "週次定例 🚀.md");
+        assert_eq!(name("Q4: plan/budget [draft] #2?"), "Q4 plan budget draft 2.md");
+        assert_eq!(name("   "), "Untitled meeting.md");
+        assert_eq!(name("///"), "Untitled meeting.md");
+        assert_eq!(name("../../etc/passwd"), ".. .. etc passwd.md", "no path traversal");
+        // Long titles are cut by characters, never inside a multi-byte character.
+        let long = name(&"会議".repeat(100));
+        assert_eq!(long.trim_end_matches(".md").chars().count(), 90);
+    }
+
+    #[test]
+    fn front_matter_escapes_quotes_and_backslashes() {
+        let m = Meeting {
+            id: "x".into(),
+            title: "Say \"hi\" to C:\\Users".into(),
+            created_at: chrono::Utc::now(),
+            attendees: vec![Attendee { name: "Zoë \"Z\" O'Neil".into(), email: None, is_self: false }],
+            ..Default::default()
+        };
+        let f = render_front_matter(&m, &ExportOptions::default());
+        assert!(f.contains(r#"title: "Say \"hi\" to C:\\Users""#), "{f}");
+        assert!(f.contains(r#"attendees: ["[[Zoë Z O'Neil]]"]"#), "{f}");
+    }
+
+    #[test]
+    fn empty_meeting_renders_placeholders() {
+        let m = Meeting { id: "e".into(), created_at: chrono::Utc::now(), ..Default::default() };
+        let b = render_block(&m, &[], &ExportOptions::default());
+        assert!(b.contains("# Untitled meeting"));
+        assert!(b.contains("_No notes taken._"));
+        assert!(!b.contains("## Transcript"), "no transcript section without segments");
+        assert!(!b.contains("## Summary"));
+        // Segments with only whitespace don't produce lines either.
+        let b = render_block(&m, &[seg("s1", 0, "  ")], &ExportOptions::default());
+        assert!(!b.contains("**00:00"));
+    }
+
+    #[test]
+    fn long_meeting_timestamps_and_multiline_segments_stay_in_the_callout() {
+        let m = Meeting { id: "l".into(), created_at: chrono::Utc::now(), ..Default::default() };
+        let segs = vec![seg("s1", 2 * 3_600_000 + 5_000, "first line\nsecond line"), seg("me", 2 * 3_600_000 + 9_000, "ok")];
+        let b = render_block(&m, &segs, &ExportOptions::default());
+        assert!(b.contains("**120:05 Speaker 1:**"), "{b}");
+        // Every transcript line must stay inside the collapsed "> " callout.
+        let transcript: Vec<&str> = b.lines().skip_while(|l| !l.starts_with("## Transcript")).skip(1).take_while(|l| !l.is_empty()).collect();
+        assert!(transcript.iter().all(|l| l.starts_with('>')), "{transcript:#?}");
+        assert!(b.contains("second line"));
+    }
+
+    #[test]
+    fn merge_handles_crlf_notes_without_duplicating_front_matter() {
+        // A note edited on another device or by a sync tool may come back with CRLF endings.
+        let existing = format!("---\r\nmilkrice_id: abc\r\ntitle: \"Old\"\r\n---\r\n{START}\r\nold\r\n{END}\r\nmine\r\n");
+        let out = merge(&existing, "---\nmilkrice_id: abc\n---\n", &format!("{START}\nnew\n{END}\n"));
+        assert_eq!(out.matches("milkrice_id").count(), 1, "{out}");
+        assert!(out.contains("new") && !out.contains("\nold") && out.contains("mine"), "{out}");
+    }
+
+    #[test]
+    fn merge_into_note_without_block_keeps_user_text_once() {
+        let out = merge("my own text\n", "---\nmilkrice_id: a\n---\n", &format!("{START}\nB\n{END}\n"));
+        assert_eq!(out.matches("my own text").count(), 1);
+        assert!(out.starts_with("---\nmilkrice_id: a\n---\n"));
+        // Merging the result again is stable.
+        let again = merge(&out, "---\nmilkrice_id: a\n---\n", &format!("{START}\nB\n{END}\n"));
+        assert_eq!(again.matches("my own text").count(), 1);
+        assert_eq!(again.matches(START).count(), 1);
     }
 }

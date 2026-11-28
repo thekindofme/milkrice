@@ -79,8 +79,27 @@ fn props(text: &str) -> Vec<Prop> {
         .collect()
 }
 
+/// TEXT value unescaping (RFC 5545 3.3.11), one escape at a time so that an escaped backslash
+/// followed by "n" stays a backslash and an "n".
 fn unescape(s: &str) -> String {
-    s.replace("\\n", "\n").replace("\\N", "\n").replace("\\,", ",").replace("\\;", ";").replace("\\\\", "\\")
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars();
+    while let Some(c) = it.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match it.next() {
+            Some('n' | 'N') => out.push('\n'),
+            Some(e @ (',' | ';' | '\\')) => out.push(e),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 /// Parse DTSTART/DTEND-style values into UTC. Returns (instant, all_day).
@@ -100,7 +119,13 @@ fn parse_dt(p: &Prop) -> Option<(DateTime<Utc>, bool)> {
         .get("TZID")
         .and_then(|t| t.parse().ok())
         .unwrap_or(chrono_tz::Tz::UTC);
-    let local = tz.from_local_datetime(&n).earliest()?;
+    // In a fall-back overlap the first of the two times is meant (RFC 5545 3.3.5). A time in a
+    // spring-forward gap doesn't exist; calendar apps move it forward by the gap, so do the same
+    // rather than dropping the event.
+    let local = tz
+        .from_local_datetime(&n)
+        .earliest()
+        .or_else(|| tz.from_local_datetime(&(n + chrono::Duration::hours(1))).earliest())?;
     Some((local.with_timezone(&Utc), false))
 }
 
@@ -208,12 +233,48 @@ fn prop_line(p: &Prop) -> String {
     format!("{s}:{}", p.value)
 }
 
+/// RRULE's UNTIL must have the same value type as DTSTART (and be UTC when DTSTART has a
+/// time zone). Feeds sometimes break that, and the rrule crate then rejects the whole rule,
+/// leaving only the first meeting. Rewrite UNTIL to match: a date means "through that day" in
+/// the event's time zone; a date-time on an all-day event keeps just its date.
+fn until_matching_start(rule: &str, start: &Prop) -> String {
+    let timed_start = start.value.contains('T');
+    rule.split(';')
+        .map(|part| {
+            let Some(until) = part.strip_prefix("UNTIL=").or_else(|| part.strip_prefix("until=")) else {
+                return part.to_string();
+            };
+            let date_only = until.len() == 8 && until.chars().all(|c| c.is_ascii_digit());
+            if timed_start && date_only {
+                let Some(day) = NaiveDate::parse_from_str(until, "%Y%m%d").ok().and_then(|d| d.and_hms_opt(23, 59, 59)) else {
+                    return part.to_string();
+                };
+                let utc = if start.value.ends_with('Z') {
+                    Some(Utc.from_utc_datetime(&day))
+                } else {
+                    let tz: chrono_tz::Tz = start.params.get("TZID").and_then(|t| t.parse().ok()).unwrap_or(chrono_tz::Tz::UTC);
+                    tz.from_local_datetime(&day).earliest().map(|d| d.with_timezone(&Utc))
+                };
+                match utc {
+                    Some(u) => format!("UNTIL={}", u.format("%Y%m%dT%H%M%SZ")),
+                    None => part.to_string(),
+                }
+            } else if !timed_start && !date_only && until.len() >= 8 {
+                format!("UNTIL={}", &until[..8])
+            } else {
+                part.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
 fn occurrences(e: &VEvent, from: DateTime<Utc>, to: DateTime<Utc>) -> Vec<DateTime<Utc>> {
     let Some((start, _)) = e.start else { return vec![] };
     let (Some(rule), Some(sp)) = (&e.rrule, &e.start_raw) else {
         return vec![start];
     };
-    let mut spec = format!("{}\nRRULE:{}", prop_line(sp), rule);
+    let mut spec = format!("{}\nRRULE:{}", prop_line(sp), until_matching_start(rule, sp));
     for ex in &e.exdates {
         spec.push('\n');
         spec.push_str(&prop_line(ex));
@@ -243,10 +304,15 @@ pub fn parse(text: &str, calendar_name: &str, owner_email: Option<&str>, from: D
         .iter()
         .filter_map(|e| e.recurrence_id.map(|r| ((e.uid.clone(), r.timestamp()), e)))
         .collect();
+    // Series whose main event (the one without RECURRENCE-ID) is in the feed.
+    let parents: std::collections::HashSet<&str> =
+        events.iter().filter(|e| e.recurrence_id.is_none()).map(|e| e.uid.as_str()).collect();
     let mut out = Vec::new();
     for e in &events {
-        if e.recurrence_id.is_some() {
-            continue; // handled when expanding its parent
+        // Handled when expanding its parent. Without one (invited to a single occurrence of
+        // someone else's series) the occurrence stands on its own.
+        if e.recurrence_id.is_some() && parents.contains(e.uid.as_str()) {
+            continue;
         }
         let Some((start, all_day)) = e.start else { continue };
         let dur = e.end.map(|(end, _)| end - start).unwrap_or_else(|| chrono::Duration::minutes(if all_day { 1440 } else { 30 }));
@@ -314,5 +380,247 @@ mod tests {
         let all = parse(FEED, "Google", None, from, to);
         let d = all.iter().find(|e| e.title == "Design sync, weekly").unwrap();
         assert_eq!(d.meeting_url.as_deref(), Some("https://zoom.us/j/123?pwd=abc"));
+    }
+}
+
+/// Edge cases that bite real calendars: DST, all-day and multi-day events, RRULE variants,
+/// exceptions, unicode.
+#[cfg(test)]
+mod edge_tests {
+    use super::*;
+
+    fn feed(events: &[&str]) -> String {
+        let mut s = String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n");
+        for e in events {
+            s.push_str("BEGIN:VEVENT\r\n");
+            for line in e.lines() {
+                s.push_str(line.trim_start());
+                s.push_str("\r\n");
+            }
+            s.push_str("END:VEVENT\r\n");
+        }
+        s.push_str("END:VCALENDAR\r\n");
+        s
+    }
+
+    fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, mo, d, h, mi, 0).unwrap()
+    }
+
+    #[test]
+    fn weekly_series_keeps_local_time_across_dst_end() {
+        // 09:00 New York every Friday; DST ends Sun 1 Nov 2026 (EDT -4 -> EST -5).
+        let f = feed(&["UID:standup
+            SUMMARY:Standup
+            DTSTART;TZID=America/New_York:20261023T090000
+            DTEND;TZID=America/New_York:20261023T091500
+            RRULE:FREQ=WEEKLY;BYDAY=FR"]);
+        let evs = parse(&f, "Work", None, utc(2026, 10, 22, 0, 0), utc(2026, 11, 14, 0, 0));
+        let starts: Vec<_> = evs.iter().map(|e| e.start).collect();
+        assert_eq!(starts, vec![utc(2026, 10, 23, 13, 0), utc(2026, 10, 30, 13, 0), utc(2026, 11, 6, 14, 0), utc(2026, 11, 13, 14, 0)]);
+        assert!(evs.iter().all(|e| e.end - e.start == chrono::Duration::minutes(15)));
+        // Occurrence ids are distinct and share the series prefix.
+        assert!(evs.iter().all(|e| e.id.starts_with("ics:standup@")));
+        let mut ids: Vec<_> = evs.iter().map(|e| e.id.clone()).collect();
+        ids.dedup();
+        assert_eq!(ids.len(), 4);
+    }
+
+    #[test]
+    fn weekly_series_keeps_local_time_across_dst_start_southern_hemisphere() {
+        // Sydney DST starts Sun 4 Oct 2026 (AEST +10 -> AEDT +11).
+        let f = feed(&["UID:syd
+            SUMMARY:Planning
+            DTSTART;TZID=Australia/Sydney:20260928T100000
+            DTEND;TZID=Australia/Sydney:20260928T110000
+            RRULE:FREQ=WEEKLY"]);
+        let evs = parse(&f, "Work", None, utc(2026, 9, 27, 0, 0), utc(2026, 10, 7, 0, 0));
+        let starts: Vec<_> = evs.iter().map(|e| e.start).collect();
+        assert_eq!(starts, vec![utc(2026, 9, 28, 0, 0), utc(2026, 10, 4, 23, 0)]);
+    }
+
+    #[test]
+    fn event_in_the_spring_forward_gap_is_not_dropped() {
+        // 02:30 on 8 Mar 2026 does not exist in New York (clocks jump 02:00 -> 03:00).
+        // Calendar apps show it at 03:30 EDT; it must not vanish from the feed.
+        let f = feed(&["UID:gap
+            SUMMARY:Night shift handover
+            DTSTART;TZID=America/New_York:20260308T023000
+            DTEND;TZID=America/New_York:20260308T040000"]);
+        let evs = parse(&f, "Work", None, utc(2026, 3, 7, 0, 0), utc(2026, 3, 9, 0, 0));
+        assert_eq!(evs.len(), 1, "event at a non-existent local time was dropped");
+        assert_eq!(evs[0].start, utc(2026, 3, 8, 7, 30));
+        assert_eq!(evs[0].end, utc(2026, 3, 8, 8, 0));
+    }
+
+    #[test]
+    fn ambiguous_fall_back_time_uses_the_first_occurrence() {
+        // 01:30 on 1 Nov 2026 happens twice in New York; RFC 5545 says use the first (EDT).
+        let f = feed(&["UID:amb
+            SUMMARY:Early call
+            DTSTART;TZID=America/New_York:20261101T013000
+            DTEND;TZID=America/New_York:20261101T014500"]);
+        let evs = parse(&f, "Work", None, utc(2026, 10, 31, 0, 0), utc(2026, 11, 2, 0, 0));
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].start, utc(2026, 11, 1, 5, 30));
+    }
+
+    #[test]
+    fn all_day_and_multi_day_events() {
+        let f = feed(&[
+            "UID:holiday
+            SUMMARY:Public holiday
+            DTSTART;VALUE=DATE:20261126
+            DTEND;VALUE=DATE:20261127",
+            "UID:offsite
+            SUMMARY:Team offsite
+            DTSTART;VALUE=DATE:20261123
+            DTEND;VALUE=DATE:20261126",
+            "UID:noend
+            SUMMARY:Reminder day
+            DTSTART;VALUE=DATE:20261125",
+        ]);
+        let evs = parse(&f, "Work", None, utc(2026, 11, 24, 0, 0), utc(2026, 11, 30, 0, 0));
+        let get = |t: &str| evs.iter().find(|e| e.title == t).unwrap_or_else(|| panic!("{t} missing: {evs:#?}"));
+        let h = get("Public holiday");
+        assert!(h.all_day);
+        assert_eq!(h.end - h.start, chrono::Duration::days(1));
+        // Started before the window but still running: kept.
+        let o = get("Team offsite");
+        assert!(o.all_day);
+        assert_eq!(o.end - o.start, chrono::Duration::days(3));
+        // No DTEND on a date event: lasts the day (RFC 5545 3.6.1).
+        let r = get("Reminder day");
+        assert!(r.all_day);
+        assert_eq!(r.end - r.start, chrono::Duration::days(1));
+    }
+
+    #[test]
+    fn yearly_all_day_series() {
+        let f = feed(&["UID:bday
+            SUMMARY:Ana's birthday
+            DTSTART;VALUE=DATE:20200214
+            DTEND;VALUE=DATE:20200215
+            RRULE:FREQ=YEARLY"]);
+        let evs = parse(&f, "Personal", None, utc(2027, 2, 1, 0, 0), utc(2027, 3, 1, 0, 0));
+        assert_eq!(evs.len(), 1, "{evs:#?}");
+        assert!(evs[0].all_day);
+        assert_eq!(evs[0].start, utc(2027, 2, 14, 0, 0));
+    }
+
+    #[test]
+    fn until_count_and_exdate_in_utc() {
+        let f = feed(&[
+            "UID:count
+            SUMMARY:Onboarding
+            DTSTART:20261102T150000Z
+            DTEND:20261102T160000Z
+            RRULE:FREQ=DAILY;COUNT=3",
+            "UID:until
+            SUMMARY:Sprint review
+            DTSTART;TZID=Europe/Berlin:20261102T140000
+            DTEND;TZID=Europe/Berlin:20261102T150000
+            RRULE:FREQ=WEEKLY;UNTIL=20261116T130000Z
+            EXDATE;TZID=Europe/Berlin:20261109T140000",
+        ]);
+        let evs = parse(&f, "Work", None, utc(2026, 11, 1, 0, 0), utc(2026, 12, 31, 0, 0));
+        assert_eq!(evs.iter().filter(|e| e.title == "Onboarding").count(), 3);
+        let sr: Vec<_> = evs.iter().filter(|e| e.title == "Sprint review").map(|e| e.start).collect();
+        assert_eq!(sr, vec![utc(2026, 11, 2, 13, 0), utc(2026, 11, 16, 13, 0)]);
+    }
+
+    #[test]
+    fn until_as_a_date_with_a_timed_start_still_expands() {
+        // Seen in exported feeds: UNTIL given as a DATE while DTSTART is a DATE-TIME. Strictly
+        // invalid, but every calendar app treats it as "through that day" rather than
+        // showing only the first meeting.
+        let f = feed(&["UID:loose
+            SUMMARY:Office hours
+            DTSTART;TZID=Europe/London:20261103T100000
+            DTEND;TZID=Europe/London:20261103T110000
+            RRULE:FREQ=WEEKLY;UNTIL=20261117"]);
+        let evs = parse(&f, "Work", None, utc(2026, 11, 1, 0, 0), utc(2026, 12, 31, 0, 0));
+        let starts: Vec<_> = evs.iter().map(|e| e.start).collect();
+        assert_eq!(starts, vec![utc(2026, 11, 3, 10, 0), utc(2026, 11, 10, 10, 0), utc(2026, 11, 17, 10, 0)]);
+    }
+
+    #[test]
+    fn until_as_a_date_time_with_an_all_day_start_still_expands() {
+        let f = feed(&["UID:allday-until
+            SUMMARY:Focus day
+            DTSTART;VALUE=DATE:20261103
+            DTEND;VALUE=DATE:20261104
+            RRULE:FREQ=WEEKLY;UNTIL=20261117T000000Z"]);
+        let evs = parse(&f, "Work", None, utc(2026, 11, 1, 0, 0), utc(2026, 12, 31, 0, 0));
+        assert_eq!(evs.len(), 3, "{evs:#?}");
+        assert!(evs.iter().all(|e| e.all_day));
+    }
+
+    #[test]
+    fn cancelled_occurrence_override_is_skipped() {
+        let f = feed(&[
+            "UID:wk
+            SUMMARY:1:1
+            DTSTART:20261102T090000Z
+            DTEND:20261102T093000Z
+            RRULE:FREQ=WEEKLY;COUNT=3",
+            "UID:wk
+            RECURRENCE-ID:20261109T090000Z
+            SUMMARY:1:1
+            STATUS:CANCELLED
+            DTSTART:20261109T090000Z
+            DTEND:20261109T093000Z",
+        ]);
+        let evs = parse(&f, "Work", None, utc(2026, 11, 1, 0, 0), utc(2026, 12, 1, 0, 0));
+        let starts: Vec<_> = evs.iter().map(|e| e.start).collect();
+        assert_eq!(starts, vec![utc(2026, 11, 2, 9, 0), utc(2026, 11, 16, 9, 0)]);
+    }
+
+    #[test]
+    fn single_invited_occurrence_without_its_series_is_shown() {
+        // Invited to one occurrence of someone else's series: Google's feed has only the
+        // RECURRENCE-ID instance, not the parent with the RRULE.
+        let f = feed(&["UID:foreign-series
+            RECURRENCE-ID;TZID=Europe/Paris:20261110T150000
+            SUMMARY:Guest talk
+            DTSTART;TZID=Europe/Paris:20261110T160000
+            DTEND;TZID=Europe/Paris:20261110T170000"]);
+        let evs = parse(&f, "Work", None, utc(2026, 11, 1, 0, 0), utc(2026, 12, 1, 0, 0));
+        assert_eq!(evs.len(), 1, "orphan occurrence dropped");
+        assert_eq!(evs[0].title, "Guest talk");
+        assert_eq!(evs[0].start, utc(2026, 11, 10, 15, 0));
+    }
+
+    #[test]
+    fn unicode_titles_folding_and_escapes() {
+        // A folded SUMMARY (continuation line starts with a space) with emoji and CJK.
+        let text = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:u1\r\nSUMMARY:週次定例 🚀 Café\\, Zürich \r\n — Q4 planning\r\nLOCATION:Room \\\\new\r\nDTSTART:20261102T090000Z\r\nDTEND:20261102T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+        let evs = parse(text, "Work", None, utc(2026, 11, 1, 0, 0), utc(2026, 11, 3, 0, 0));
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].title, "週次定例 🚀 Café, Zürich — Q4 planning");
+        // "\\" is an escaped backslash, so "\\new" is a backslash followed by "new", not a newline.
+        assert_eq!(evs[0].location.as_deref(), Some("Room \\new"));
+    }
+
+    #[test]
+    fn lf_only_feed_and_lowercase_names_parse() {
+        let text = "BEGIN:VCALENDAR\nBEGIN:VEVENT\nuid:lf\nsummary:Plain LF\ndtstart:20261102T090000Z\ndtend:20261102T093000Z\nEND:VEVENT\nEND:VCALENDAR\n";
+        let evs = parse(text, "Work", None, utc(2026, 11, 1, 0, 0), utc(2026, 11, 3, 0, 0));
+        assert_eq!(evs.len(), 1);
+        assert_eq!(evs[0].title, "Plain LF");
+    }
+
+    #[test]
+    fn events_outside_the_window_and_missing_start_are_ignored() {
+        let f = feed(&[
+            "UID:past
+            SUMMARY:Past
+            DTSTART:20261001T090000Z
+            DTEND:20261001T100000Z",
+            "UID:nostart
+            SUMMARY:Broken",
+        ]);
+        assert!(parse(&f, "Work", None, utc(2026, 11, 1, 0, 0), utc(2026, 11, 3, 0, 0)).is_empty());
+        assert!(parse("", "Work", None, utc(2026, 11, 1, 0, 0), utc(2026, 11, 3, 0, 0)).is_empty());
     }
 }
