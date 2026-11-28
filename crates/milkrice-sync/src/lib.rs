@@ -16,3 +16,4 @@ pub mod desktop;
 pub mod folder;
 pub mod merge;
 pub mod pair;
+pub mod pairing;

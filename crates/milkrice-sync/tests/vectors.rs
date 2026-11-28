@@ -82,7 +82,67 @@ fn build() -> Value {
             vec![rec("7f3c1d2e-0000-4000-8000-000000000001", mac, json!({"deleted": [true, "1763683400000-0000-mac00000000000000000000000000002"]}))],
             1763683200000, 1, 1763683300000,
         ),
+        merge_case(
+            "malformed and out-of-range remote stamps are ignored",
+            json!({"title": "Mine"}),
+            json!({"title": {"hash": merge::value_hash(&json!("Mine")), "hlc": "1763683200000-0000-phone0000000000000000000000000001"}}),
+            vec![
+                rec("7f3c1d2e-0000-4000-8000-000000000001", mac, json!({"title": ["Tilde", "~"]})),
+                rec("7f3c1d2e-0000-4000-8000-000000000001", "mac00000000000000000000000000003", json!({"title": ["Far future", "99999999999999-0000-mac00000000000000000000000000003"]})),
+                rec("7f3c1d2e-0000-4000-8000-000000000001", "mac00000000000000000000000000004", json!({"notes": ["Bad device", "1763683300000-0000-../evil"]})),
+            ],
+            1763683200000, 0, 1763683200500,
+        ),
+        merge_case(
+            "legacy five-digit counter orders after 9999",
+            json!({}),
+            json!({"title": {"hash": merge::value_hash(&json!("Older")), "hlc": "1763683200000-9999-mac00000000000000000000000000002"}}),
+            vec![rec("7f3c1d2e-0000-4000-8000-000000000001", mac, json!({"title": ["Newer", "1763683200000-10000-mac00000000000000000000000000002"]}))],
+            1763683200000, 9999, 1763683100000,
+        ),
+        merge_case(
+            "counter rolls into the next millisecond",
+            json!({"title": "A", "notes": "B", "mode": "room"}),
+            json!({}),
+            vec![],
+            1763683200000, 9998, 1763683100000,
+        ),
     ];
+
+    // Padding edges: the length prefix plus payload exactly fills, then just overflows, one block.
+    let pad: Vec<Value> = [0usize, 1020, 1021]
+        .iter()
+        .map(|&n| {
+            let payload = vec![b'x'; n];
+            let f = crypto::seal_with_nonce(&key, &vault, 1, &nonce, &payload).unwrap();
+            json!({"payload_len": n, "payload_byte": "x", "file_len": f.len(), "sha256": hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&f))})
+        })
+        .collect();
+
+    // HLCs: ticks across the counter limit, observe, parse and compare.
+    let mut c = merge::Clock { device: "d1".into(), ms: 1763683200000, counter: 9998 };
+    let ticks: Vec<String> = (0..3).map(|_| c.tick(1763683100000)).collect();
+    let mut o = merge::Clock { device: "d1".into(), ms: 1763683200000, counter: 5 };
+    o.observe("1763683200000-0007-x");
+    let after_observe = o.tick(1763683200000);
+    o.observe("garbage");
+    let valid = ["1763683200000-0000-d1", "0000000000001-0000-a", "9999999999999-9999-x.y_z-w", "1763683200000-10000-legacy"];
+    let invalid = ["", "~", "1763683200000-0000-", "1763683200000-0000-..", "1763683200000-0000-a/b", "1763683200000-x-d", "10000000000000-0000-d", "1763683200000-0000-a b"];
+    for v in valid { assert!(merge::parse_hlc(v).is_some(), "{v}"); }
+    for v in invalid { assert!(merge::parse_hlc(v).is_none(), "{v}"); }
+    let order = [
+        ("1763683200000-0001-a", "1763683200000-0000-b", 1),
+        ("1763683200000-0000-b", "1763683200000-0000-a", 1),
+        ("1763683200000-10000-a", "1763683200000-9999-a", 1),
+        ("1763683200000-0000-a", "~", 1),
+        ("~", "garbage", 0),
+        ("1763683200000-0000-a", "1763683200000-0000-a", 0),
+    ];
+    for (a, b, want) in order { assert_eq!(merge::hlc_cmp(a, b) as i8, want, "{a} vs {b}"); }
+
+    // The exact pairing messages a joining device writes and the Mac answers with.
+    let request = pair::make_request(&dp, &invite, &phone_pub, br#"{"name":"Test iPhone","kind":"iphone"}"#, &card_nonce).unwrap();
+    assert_eq!(request.card, crypto::b64(&card));
 
     let canon = json!(["Room", 4500, true, null, {"b": "/", "a": "déjà"}]);
     let mut canon_bytes = Vec::new();
@@ -102,6 +162,17 @@ fn build() -> Value {
             "card_nonce": hex::encode(card_nonce), "card_plain": r#"{"name":"Test iPhone","kind":"iphone"}"#, "card": crypto::b64(&card)
         },
         "merge": cases,
+        "pad": pad,
+        "hlc": {
+            "tick_overflow": {"device": "d1", "ms": 1763683200000u64, "counter": 9998, "wall_ms": 1763683100000u64, "ticks": ticks},
+            "observe": {"start": {"ms": 1763683200000u64, "counter": 5}, "observed": "1763683200000-0007-x", "then_garbage": "garbage", "next_tick_at_wall_1763683200000": after_observe},
+            "valid": valid, "invalid": invalid,
+            "compare": order.iter().map(|(a, b, w)| json!([a, b, w])).collect::<Vec<_>>(),
+        },
+        "pair_messages": {
+            "req_json": serde_json::to_string(&request).unwrap(),
+            "resp_json": serde_json::to_string(&grant).unwrap(),
+        },
     })
 }
 

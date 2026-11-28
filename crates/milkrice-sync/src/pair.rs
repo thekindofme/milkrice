@@ -91,12 +91,27 @@ pub struct Response {
     pub grant: String,
 }
 
+/// The joining device's half of step 2: its request, with `card` (JSON) sealed with the pairing key.
+pub fn make_request(d: &Derived, invite: &Invite, phone_pub: &[u8; 32], card: &[u8], nonce: &[u8; NONCE_LEN]) -> Result<Request> {
+    Ok(Request { v: 1, public: crypto::b64(phone_pub), card: crypto::b64(&crypto::box_seal(&d.pair_key, &invite.session, nonce, card)?) })
+}
+
+/// The Mac's half of step 3: derive from a request and open the card it carries.
+pub fn open_request(mac_secret: &[u8; 32], invite: &Invite, r: &Request) -> Result<(Derived, Vec<u8>)> {
+    ensure!(r.v == 1, "unsupported pairing request version {}", r.v);
+    let phone_pub: [u8; 32] = crypto::unb64(&r.public)?.try_into().ok().context("bad public key in pairing request")?;
+    let d = derive(mac_secret, &phone_pub, invite, &phone_pub)?;
+    let card = crypto::box_open(&d.pair_key, &invite.session, &crypto::unb64(&r.card)?)?;
+    Ok((d, card))
+}
+
 pub fn seal_grant(d: &Derived, invite: &Invite, key_id: u32, vault_key: &Key, nonce: &[u8; NONCE_LEN]) -> Result<Response> {
     let msg = [key_id.to_be_bytes().as_slice(), vault_key].concat();
     Ok(Response { v: 1, grant: crypto::b64(&crypto::box_seal(&d.pair_key, &invite.session, nonce, &msg)?) })
 }
 
 pub fn open_grant(d: &Derived, invite: &Invite, r: &Response) -> Result<(u32, Key)> {
+    ensure!(r.v == 1, "unsupported pairing response version {}", r.v);
     let msg = crypto::box_open(&d.pair_key, &invite.session, &crypto::unb64(&r.grant)?)?;
     ensure!(msg.len() == 36, "grant has the wrong length");
     Ok((u32::from_be_bytes(msg[..4].try_into().unwrap()), msg[4..].try_into().unwrap()))

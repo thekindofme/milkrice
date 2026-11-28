@@ -40,3 +40,6 @@ required-features = ["desktop"]
 name = "desktop"
 path = "tests/desktop.rs"
 required-features = ["desktop"]
+
+[dev-dependencies]
+proptest = "1"

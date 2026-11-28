@@ -7,7 +7,6 @@ use crate::{
     crypto::{self, Key},
     folder::{DeviceCard, Vault},
     merge::{self, Clock, MeetingState, Record},
-    pair,
 };
 use anyhow::{bail, Context, Result};
 use chrono::{SecondsFormat, Utc};
@@ -117,7 +116,7 @@ fn delete_key(vault_id: &str) {
 }
 
 pub fn open_vault(cfg: &Config) -> Result<Vault> {
-    Vault::open(&cfg.folder, load_key(&cfg.vault_id)?)
+    Vault::open_expecting(&cfg.folder, load_key(&cfg.vault_id)?, &cfg.vault_id)
 }
 
 /// iCloud Drive › Milkrice Sync.
@@ -187,60 +186,7 @@ pub fn leave() -> Result<()> {
 
 // ---------- pairing
 
-/// One pairing attempt: show `qr`, `poll` until a phone answers, compare codes, then `accept`.
-pub struct Pairing {
-    secret: [u8; 32],
-    invite: pair::Invite,
-    pub qr: String,
-    req_path: PathBuf,
-    pending: Option<(pair::Derived, DeviceCard)>,
-}
-
-/// A phone that scanned the code and is waiting for the person to compare codes.
-#[derive(Debug, Clone, Serialize)]
-pub struct Joining {
-    pub name: String,
-    pub code: String,
-}
-
-impl Pairing {
-    pub fn start(vault: &Vault) -> Self {
-        let secret: [u8; 32] = crypto::random_bytes();
-        let invite = pair::Invite { vault_id: vault.vault_id, session: crypto::random_bytes(), mac_pub: pair::public_key(&secret) };
-        let qr = invite.to_qr();
-        let req_path = vault.pair_dir().join(format!("{}.req", invite.session_hex()));
-        Self { secret, invite, qr, req_path, pending: None }
-    }
-
-    /// The phone that answered, once one has.
-    pub fn poll(&mut self) -> Result<Option<Joining>> {
-        if let Some((d, card)) = &self.pending {
-            return Ok(Some(Joining { name: card.name.clone(), code: d.code.clone() }));
-        }
-        let Ok(b) = std::fs::read(&self.req_path) else { return Ok(None) };
-        let Ok(req) = serde_json::from_slice::<pair::Request>(&b) else { return Ok(None) }; // still being written
-        let phone_pub: [u8; 32] = crypto::unb64(&req.public)?.try_into().ok().context("bad pairing request")?;
-        let d = pair::derive(&self.secret, &phone_pub, &self.invite, &phone_pub)?;
-        let card: DeviceCard = serde_json::from_slice(&crypto::box_open(&d.pair_key, &self.invite.session, &crypto::unb64(&req.card)?)?)?;
-        let j = Joining { name: card.name.clone(), code: d.code.clone() };
-        self.pending = Some((d, card));
-        Ok(Some(j))
-    }
-
-    /// The person confirmed the codes match: hand the vault key to the phone.
-    pub fn accept(&self, vault: &Vault) -> Result<String> {
-        let (d, card) = self.pending.as_ref().context("no iPhone has answered yet")?;
-        let resp = pair::seal_grant(d, &self.invite, vault.key_id, &vault.key, &crypto::random_bytes())?;
-        vault.write_plain(&format!("pair/{}.resp", self.invite.session_hex()), &serde_json::to_vec(&resp)?)?;
-        let _ = std::fs::remove_file(&self.req_path);
-        Ok(card.name.clone())
-    }
-
-    /// Give up (or the codes didn't match): nothing is shared.
-    pub fn cancel(&self) {
-        let _ = std::fs::remove_file(&self.req_path);
-    }
-}
+pub use crate::pairing::{Joining, Pairing};
 
 /// The pairing invite as an SVG QR code.
 pub fn qr_svg(text: &str) -> Result<String> {
@@ -437,7 +383,7 @@ pub fn sync_pass(cfg: &Config, vault: &Vault, store: &Store) -> Result<PassRepor
             apply(store, &id, &out.apply, &view)?;
             report.imported.push(id.clone());
         }
-        let request = remotes.iter().filter_map(|r| r.fields.get("notes_request")).max_by(|a, b| a.hlc.cmp(&b.hlc)).map(|s| s.v.clone());
+        let request = remotes.iter().filter_map(|r| r.fields.get("notes_request")).max_by(|a, b| merge::hlc_cmp(&a.hlc, &b.hlc)).map(|s| s.v.clone());
         if merge::notes_requested(&state, request.as_ref()) && store.get_meeting(&id)?.is_some() {
             report.requests.push(id.clone());
         }

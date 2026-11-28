@@ -14,6 +14,76 @@
     ]
   },
   "format": 1,
+  "hlc": {
+    "compare": [
+      [
+        "1763683200000-0001-a",
+        "1763683200000-0000-b",
+        1
+      ],
+      [
+        "1763683200000-0000-b",
+        "1763683200000-0000-a",
+        1
+      ],
+      [
+        "1763683200000-10000-a",
+        "1763683200000-9999-a",
+        1
+      ],
+      [
+        "1763683200000-0000-a",
+        "~",
+        1
+      ],
+      [
+        "~",
+        "garbage",
+        0
+      ],
+      [
+        "1763683200000-0000-a",
+        "1763683200000-0000-a",
+        0
+      ]
+    ],
+    "invalid": [
+      "",
+      "~",
+      "1763683200000-0000-",
+      "1763683200000-0000-..",
+      "1763683200000-0000-a/b",
+      "1763683200000-x-d",
+      "10000000000000-0000-d",
+      "1763683200000-0000-a b"
+    ],
+    "observe": {
+      "next_tick_at_wall_1763683200000": "1763683200000-0008-d1",
+      "observed": "1763683200000-0007-x",
+      "start": {
+        "counter": 5,
+        "ms": 1763683200000
+      },
+      "then_garbage": "garbage"
+    },
+    "tick_overflow": {
+      "counter": 9998,
+      "device": "d1",
+      "ms": 1763683200000,
+      "ticks": [
+        "1763683200000-9999-d1",
+        "1763683200001-0000-d1",
+        "1763683200001-0001-d1"
+      ],
+      "wall_ms": 1763683100000
+    },
+    "valid": [
+      "1763683200000-0000-d1",
+      "0000000000001-0000-a",
+      "9999999999999-9999-x.y_z-w",
+      "1763683200000-10000-legacy"
+    ]
+  },
   "kcv": {
     "kcv": "a261089387fbe9b6",
     "key": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da"
@@ -317,6 +387,217 @@
         }
       },
       "wall_ms": 1763683300000
+    },
+    {
+      "clock": {
+        "counter": 0,
+        "device": "phone0000000000000000000000000001",
+        "ms": 1763683200000
+      },
+      "expect": {
+        "apply": {},
+        "clock": {
+          "counter": 0,
+          "ms": 1763683200000
+        },
+        "record": {
+          "device": "phone0000000000000000000000000001",
+          "fields": {
+            "title": {
+              "hlc": "1763683200000-0000-phone0000000000000000000000000001",
+              "v": "Mine"
+            }
+          },
+          "id": "7f3c1d2e-0000-4000-8000-000000000001",
+          "v": 1
+        },
+        "state": {
+          "title": {
+            "hash": "881793ae43a6ae1e",
+            "hlc": "1763683200000-0000-phone0000000000000000000000000001"
+          }
+        }
+      },
+      "id": "7f3c1d2e-0000-4000-8000-000000000001",
+      "local": {
+        "title": "Mine"
+      },
+      "name": "malformed and out-of-range remote stamps are ignored",
+      "remotes": [
+        {
+          "device": "mac00000000000000000000000000002",
+          "fields": {
+            "title": {
+              "hlc": "~",
+              "v": "Tilde"
+            }
+          },
+          "id": "7f3c1d2e-0000-4000-8000-000000000001",
+          "v": 1
+        },
+        {
+          "device": "mac00000000000000000000000000003",
+          "fields": {
+            "title": {
+              "hlc": "99999999999999-0000-mac00000000000000000000000000003",
+              "v": "Far future"
+            }
+          },
+          "id": "7f3c1d2e-0000-4000-8000-000000000001",
+          "v": 1
+        },
+        {
+          "device": "mac00000000000000000000000000004",
+          "fields": {
+            "notes": {
+              "hlc": "1763683300000-0000-../evil",
+              "v": "Bad device"
+            }
+          },
+          "id": "7f3c1d2e-0000-4000-8000-000000000001",
+          "v": 1
+        }
+      ],
+      "state": {
+        "title": {
+          "hash": "881793ae43a6ae1e",
+          "hlc": "1763683200000-0000-phone0000000000000000000000000001"
+        }
+      },
+      "wall_ms": 1763683200500
+    },
+    {
+      "clock": {
+        "counter": 9999,
+        "device": "phone0000000000000000000000000001",
+        "ms": 1763683200000
+      },
+      "expect": {
+        "apply": {
+          "title": "Newer"
+        },
+        "clock": {
+          "counter": 10000,
+          "ms": 1763683200000
+        },
+        "record": {
+          "device": "phone0000000000000000000000000001",
+          "fields": {
+            "title": {
+              "hlc": "1763683200000-10000-mac00000000000000000000000000002",
+              "v": "Newer"
+            }
+          },
+          "id": "7f3c1d2e-0000-4000-8000-000000000001",
+          "v": 1
+        },
+        "state": {
+          "title": {
+            "hash": "d22c2e811065959c",
+            "hlc": "1763683200000-10000-mac00000000000000000000000000002"
+          }
+        }
+      },
+      "id": "7f3c1d2e-0000-4000-8000-000000000001",
+      "local": {},
+      "name": "legacy five-digit counter orders after 9999",
+      "remotes": [
+        {
+          "device": "mac00000000000000000000000000002",
+          "fields": {
+            "title": {
+              "hlc": "1763683200000-10000-mac00000000000000000000000000002",
+              "v": "Newer"
+            }
+          },
+          "id": "7f3c1d2e-0000-4000-8000-000000000001",
+          "v": 1
+        }
+      ],
+      "state": {
+        "title": {
+          "hash": "9499eadc865d3e44",
+          "hlc": "1763683200000-9999-mac00000000000000000000000000002"
+        }
+      },
+      "wall_ms": 1763683100000
+    },
+    {
+      "clock": {
+        "counter": 9998,
+        "device": "phone0000000000000000000000000001",
+        "ms": 1763683200000
+      },
+      "expect": {
+        "apply": {},
+        "clock": {
+          "counter": 1,
+          "ms": 1763683200001
+        },
+        "record": {
+          "device": "phone0000000000000000000000000001",
+          "fields": {
+            "mode": {
+              "hlc": "1763683200000-9999-phone0000000000000000000000000001",
+              "v": "room"
+            },
+            "notes": {
+              "hlc": "1763683200001-0000-phone0000000000000000000000000001",
+              "v": "B"
+            },
+            "title": {
+              "hlc": "1763683200001-0001-phone0000000000000000000000000001",
+              "v": "A"
+            }
+          },
+          "id": "7f3c1d2e-0000-4000-8000-000000000001",
+          "v": 1
+        },
+        "state": {
+          "mode": {
+            "hash": "f4c4290cd9b51472",
+            "hlc": "1763683200000-9999-phone0000000000000000000000000001"
+          },
+          "notes": {
+            "hash": "ea50bd06755163aa",
+            "hlc": "1763683200001-0000-phone0000000000000000000000000001"
+          },
+          "title": {
+            "hash": "70ade8f446e437f9",
+            "hlc": "1763683200001-0001-phone0000000000000000000000000001"
+          }
+        }
+      },
+      "id": "7f3c1d2e-0000-4000-8000-000000000001",
+      "local": {
+        "mode": "room",
+        "notes": "B",
+        "title": "A"
+      },
+      "name": "counter rolls into the next millisecond",
+      "remotes": [],
+      "state": {},
+      "wall_ms": 1763683100000
+    }
+  ],
+  "pad": [
+    {
+      "file_len": 1076,
+      "payload_byte": "x",
+      "payload_len": 0,
+      "sha256": "1a6e578a15ae811df19bfa506e4c06d956ba8a085f8535ce0072594f50eeafa2"
+    },
+    {
+      "file_len": 1076,
+      "payload_byte": "x",
+      "payload_len": 1020,
+      "sha256": "881c0defd7ad806c5f28440b44e404e5875b4f8c177fc974d0eeb163053ffc4a"
+    },
+    {
+      "file_len": 2100,
+      "payload_byte": "x",
+      "payload_len": 1021,
+      "sha256": "e227960d44d761ec3999a5e4b2f7d5ff3da7500b489e563c3ac0cccdd0e8b85a"
     }
   ],
   "pair": {
@@ -336,6 +617,10 @@
     "session": "21282f363d444b52",
     "vault_id": "323940474e555c636a71787f868d949b",
     "vault_key": "01080f161d242b323940474e555c636a71787f868d949ba2a9b0b7bec5ccd3da"
+  },
+  "pair_messages": {
+    "req_json": "{\"v\":1,\"pub\":\"1xUeaBCIed8x9q4M6obO-pLQiXJVMOyClsce7DX20xg\",\"card\":\"Nz5FTFNaYWhvdn2Er4UuWf6HZ4eZ2dXMjEGtwdOlkNMxMKGq5WQQ8UllceU_uR1a3N9lnk0cSOcaOZyGxpvTy3vK\"}",
+    "resp_json": "{\"v\":1,\"grant\":\"LDM6QUhPVl1ka3J5A6YQLDFEQ0DrRv-DKv6EPm-out0PJhp4mSWTuKNrqLG0uGhrjcYTcGT5mC2ITkcEf6h44Q\"}"
   },
   "seal": {
     "file": "4d525331323940474e555c636a71787f868d949b000000035a61686f767d848b9299a0a7816caa0c0be70485d4c2ace77aebee879f3b80a8fa3b9492216604d37713cf09c22aa400f77715b7960bcc5cd96c5f98c0f5aef1a796e9a24a7fa62cbcbf2fa814f731354e2aa5a60f9c8af555723bb1b479bfafa7cff1f4b98bfb5d5704f2215d1f8831961b69edc838244c1bc20c6131174f655b1e37bbcca262cb3f2d56c16bcc6ede4c155cb442f8120e72a2e6ec057ff4003727d34f7c8e6dfbd459788cc93b624c20940680a55c56f35125ebab532a091e1722e7297c08d4a4870a246cc776ca4d499423e42cdc6c38131750d7994590d1baf3848d5579140489cd03f472fcc067572156fb9113f61ddfa4d62689cff23179a8451eae43ef102222a8c812b11fc26a70d9c069b754e62ed6b408c332f1c4d59ae6fc1265ce6863695286f140414e532434b10526dc7fb6866b1b880cf055c778007e8aab8b7ca6f14832f5001bcc0071444215541621b0867f1c5f3b6aa3ec90e263e948618dc07678ec5ad3f5f02c9855df9de26926ee3b0505c13bc7b631cbe40f0cb7b28e64783ed15d2e038d812288872eae72de7c11025058f931580aba0124d0d0551b8f9fea1d28791023bbd2dbe9f928959226e29bb2522342bd689186649455613292c2ed91f1862e872b734039131014a2e703b8d257912c0d91b25679efdea3e2b422d69c833dd8bd65f67435c7809847dbe7852e4b9c346f2c5d62e3529a57c642dd1b9f0501a90638636a487a1b93b77924290362096cfc2a63650a04cabb215bbff299f2f78687202881b99177a3febe75169742f77cb4e57e2462318e4ce4a9b5d9ba2f6fb7d6ad592242c9b5c5a1958cde951e831451deedf98643c64e4a9a5d1c0d5b734b608b2cd3448d3bb63845ebbff7dd76cc068d92a764106ddaf924601452c3f65a498699c479f84c932445199f52c560657b016682ee7a775efc15335504b74a374365605d9208099704f51ec8337cd11b6ceee56a3b03decd8611631c3341bfca57f1e623b88887cf96f3454ff32cdee6336e48cead7ea09abe5e22f2f07529a3dd6649e109b65a6193b6edd8a48835cab811ff24ff70994d524920dedefe4748f8e2fa7ebc6c3ae9c7016151d4358b003e654c8f953b0ce269a2f3d06035e15e7fe93dc86114910fee54a7475b94fcbe3425235431df44bf4c8f9095c1605f1d39c81b8b805e571ca4ce1069cc4fb294da186785eaa67b3cc126517b4678b04d6d6bc955f1504ac8725cfe3e7fa5a8502d26924eacadc1d527134ab92f21fc9f7cc16508ac51177db167d21996aabc7cd69b1667070f5cd83fd803c4092fcc097e88ef3ebebbf86fe1ee78d68f51a17017e81423e0d1ee97fb5dfd385fd66d3550dfbb1e60800e0704606a728d8747b99420bd4d21ecdebb27d0168114c801e0bf4d77c97afd66674dacb26dfc35ef75212e35b86fcef0bd133803ad10b8fc1846a2848b1d443aad0d2a037e70",
